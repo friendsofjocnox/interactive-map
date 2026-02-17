@@ -1,76 +1,140 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>RTS Map Demo</title>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-
-    <link
-      rel="stylesheet"
-      href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
-    />
-
-    <style>
-        #map { height: 100vh; }
-        .unit {
-            background: red;
-            width: 12px;
-            height: 12px;
-            border-radius: 50%;
-            border: 2px solid white;
-        }
-    </style>
+  <meta charset="utf-8">
+  <title>Pangaea RTS</title>
+  <script src="https://cdn.jsdelivr.net/npm/phaser@3/dist/phaser.js"></script>
 </head>
 <body>
 
-<div id="map"></div>
-
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-
 <script>
-    var map = L.map('map').setView([40.7128, -74.0060], 13);
+const config = {
+    type: Phaser.AUTO,
+    width: 1000,
+    height: 700,
+    backgroundColor: "#1b263b",
+    physics: { default: 'arcade' },
+    scene: {
+        preload,
+        create,
+        update
+    }
+};
 
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        attribution: '&copy; OpenStreetMap contributors'
-    }).addTo(map);
+const game = new Phaser.Game(config);
 
-    let unit = null;
+let playerUnits = [];
+let enemyUnits = [];
+let selectedUnits = [];
+let grid = [];
+const tileSize = 40;
+const cols = 25;
+const rows = 17;
 
-    // Place unit on first click
-    map.on('click', function(e) {
+function preload() {}
 
-        if (!unit) {
-            unit = L.marker(e.latlng, {
-                icon: L.divIcon({
-                    className: 'unit'
-                })
-            }).addTo(map);
-        } else {
-            moveUnit(e.latlng);
+function create() {
+
+    // Create grid with random obstacles
+    for (let y = 0; y < rows; y++) {
+        grid[y] = [];
+        for (let x = 0; x < cols; x++) {
+
+            let isBlocked = Math.random() < 0.1; // 10% obstacles
+            grid[y][x] = isBlocked;
+
+            if (isBlocked) {
+                this.add.rectangle(
+                    x * tileSize,
+                    y * tileSize,
+                    tileSize,
+                    tileSize,
+                    0x444444
+                ).setOrigin(0);
+            }
         }
+    }
+
+    // Spawn player units
+    for (let i = 0; i < 5; i++) {
+        let unit = this.add.circle(100 + i*40, 100, 10, 0x00ff00);
+        unit.selected = false;
+        playerUnits.push(unit);
+    }
+
+    // Spawn enemy units
+    for (let i = 0; i < 3; i++) {
+        let enemy = this.add.circle(800, 200 + i*60, 10, 0xff0000);
+        enemyUnits.push(enemy);
+    }
+
+    // Selection
+    this.input.on('pointerdown', pointer => {
+        selectedUnits = [];
+        playerUnits.forEach(unit => {
+            let dist = Phaser.Math.Distance.Between(
+                pointer.x, pointer.y,
+                unit.x, unit.y
+            );
+            if (dist < 15) {
+                unit.setFillStyle(0xffff00);
+                selectedUnits.push(unit);
+            } else {
+                unit.setFillStyle(0x00ff00);
+            }
+        });
     });
 
-    function moveUnit(destination) {
-        let current = unit.getLatLng();
-        let steps = 100;
-        let i = 0;
+    // Move command
+    this.input.on('pointerup', pointer => {
+        selectedUnits.forEach(unit => {
+            moveUnit(unit, pointer.x, pointer.y);
+        });
+    });
+}
 
-        let latStep = (destination.lat - current.lat) / steps;
-        let lngStep = (destination.lng - current.lng) / steps;
+function update() {
 
-        let interval = setInterval(function() {
-            if (i >= steps) {
-                clearInterval(interval);
-                return;
-            }
+    // Basic enemy AI: move toward nearest player
+    enemyUnits.forEach(enemy => {
+        let closest = playerUnits.reduce((a,b) =>
+            Phaser.Math.Distance.Between(enemy.x,enemy.y,a.x,a.y)
+            <
+            Phaser.Math.Distance.Between(enemy.x,enemy.y,b.x,b.y)
+            ? a : b
+        );
 
-            current.lat += latStep;
-            current.lng += lngStep;
+        let dx = closest.x - enemy.x;
+        let dy = closest.y - enemy.y;
+        let len = Math.sqrt(dx*dx + dy*dy);
 
-            unit.setLatLng(current);
-            i++;
-        }, 20);
-    }
+        if (len > 5) {
+            enemy.x += dx/len;
+            enemy.y += dy/len;
+        }
+    });
+}
+
+function moveUnit(unit, targetX, targetY) {
+
+    const speed = 2;
+
+    const interval = setInterval(() => {
+        let dx = targetX - unit.x;
+        let dy = targetY - unit.y;
+        let dist = Math.sqrt(dx*dx + dy*dy);
+
+        if (dist < 3) {
+            clearInterval(interval);
+            return;
+        }
+
+        unit.x += dx/dist * speed;
+        unit.y += dy/dist * speed;
+
+    }, 16);
+}
+
 </script>
 
 </body>
