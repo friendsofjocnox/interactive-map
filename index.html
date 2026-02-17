@@ -1,19 +1,23 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>My Interactive Map</title>
+    <title>RTS Map Demo</title>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
-    <!-- Leaflet CSS -->
     <link
       rel="stylesheet"
       href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
     />
 
     <style>
-        #map {
-            height: 100vh;
+        #map { height: 100vh; }
+        .unit {
+            background: red;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            border: 2px solid white;
         }
     </style>
 </head>
@@ -21,29 +25,52 @@
 
 <div id="map"></div>
 
-<!-- Leaflet JS -->
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
 <script>
-    // Create map centered on NYC
     var map = L.map('map').setView([40.7128, -74.0060], 13);
 
-    // Add OpenStreetMap tiles
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
         attribution: '&copy; OpenStreetMap contributors'
     }).addTo(map);
 
-    // Add a marker
-    var marker = L.marker([40.7128, -74.0060]).addTo(map);
-    marker.bindPopup("<b>Hello!</b><br>This is an interactive map.").openPopup();
+    let unit = null;
 
-    // Add click event
+    // Place unit on first click
     map.on('click', function(e) {
-        L.marker([e.latlng.lat, e.latlng.lng])
-            .addTo(map)
-            .bindPopup("You clicked here!")
-            .openPopup();
+
+        if (!unit) {
+            unit = L.marker(e.latlng, {
+                icon: L.divIcon({
+                    className: 'unit'
+                })
+            }).addTo(map);
+        } else {
+            moveUnit(e.latlng);
+        }
     });
+
+    function moveUnit(destination) {
+        let current = unit.getLatLng();
+        let steps = 100;
+        let i = 0;
+
+        let latStep = (destination.lat - current.lat) / steps;
+        let lngStep = (destination.lng - current.lng) / steps;
+
+        let interval = setInterval(function() {
+            if (i >= steps) {
+                clearInterval(interval);
+                return;
+            }
+
+            current.lat += latStep;
+            current.lng += lngStep;
+
+            unit.setLatLng(current);
+            i++;
+        }, 20);
+    }
 </script>
 
 </body>
