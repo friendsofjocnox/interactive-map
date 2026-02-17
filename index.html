@@ -1,141 +1,206 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <meta charset="utf-8">
-  <title>Pangaea RTS</title>
-  <script src="https://cdn.jsdelivr.net/npm/phaser@3/dist/phaser.js"></script>
+<meta charset="utf-8">
+<title>Pangaea RTS Sandbox</title>
+<script src="https://cdn.jsdelivr.net/npm/phaser@3/dist/phaser.js"></script>
+<style>
+body { margin: 0; }
+</style>
 </head>
 <body>
 
 <script>
-const config = {
-    type: Phaser.AUTO,
-    width: 1000,
-    height: 700,
-    backgroundColor: "#1b263b",
-    physics: { default: 'arcade' },
-    scene: {
-        preload,
-        create,
-        update
-    }
-};
+const tileSize = 32;
+const cols = 30;
+const rows = 20;
 
-const game = new Phaser.Game(config);
-
+let grid = [];
 let playerUnits = [];
 let enemyUnits = [];
-let selectedUnits = [];
-let grid = [];
-const tileSize = 40;
-const cols = 25;
-const rows = 17;
+let selectedUnit = null;
 
-function preload() {}
+const config = {
+    type: Phaser.AUTO,
+    width: cols * tileSize,
+    height: rows * tileSize,
+    backgroundColor: "#264653",
+    scene: { preload, create, update }
+};
+
+new Phaser.Game(config);
+
+function preload(){}
 
 function create() {
 
-    // Create grid with random obstacles
+    // Generate fictional "Pangaea" terrain
     for (let y = 0; y < rows; y++) {
         grid[y] = [];
         for (let x = 0; x < cols; x++) {
 
-            let isBlocked = Math.random() < 0.1; // 10% obstacles
-            grid[y][x] = isBlocked;
+            let blocked = Math.random() < 0.15;
+            grid[y][x] = blocked;
 
-            if (isBlocked) {
-                this.add.rectangle(
-                    x * tileSize,
-                    y * tileSize,
-                    tileSize,
-                    tileSize,
-                    0x444444
-                ).setOrigin(0);
-            }
+            let color = blocked ? 0x5e503f : 0x2a9d8f;
+
+            this.add.rectangle(
+                x * tileSize,
+                y * tileSize,
+                tileSize,
+                tileSize,
+                color
+            ).setOrigin(0);
         }
     }
 
     // Spawn player units
-    for (let i = 0; i < 5; i++) {
-        let unit = this.add.circle(100 + i*40, 100, 10, 0x00ff00);
-        unit.selected = false;
+    for (let i = 0; i < 4; i++) {
+        let unit = this.add.circle(60 + i*40, 60, 10, 0x00ff00);
+        unit.path = [];
         playerUnits.push(unit);
     }
 
-    // Spawn enemy units
+    // Spawn enemies
     for (let i = 0; i < 3; i++) {
-        let enemy = this.add.circle(800, 200 + i*60, 10, 0xff0000);
+        let enemy = this.add.circle(700, 400 + i*40, 10, 0xff0000);
+        enemy.path = [];
         enemyUnits.push(enemy);
     }
 
-    // Selection
+    // Select unit
     this.input.on('pointerdown', pointer => {
-        selectedUnits = [];
+        selectedUnit = null;
         playerUnits.forEach(unit => {
-            let dist = Phaser.Math.Distance.Between(
-                pointer.x, pointer.y,
-                unit.x, unit.y
-            );
-            if (dist < 15) {
+            let d = Phaser.Math.Distance.Between(pointer.x, pointer.y, unit.x, unit.y);
+            if (d < 15) {
+                selectedUnit = unit;
                 unit.setFillStyle(0xffff00);
-                selectedUnits.push(unit);
             } else {
                 unit.setFillStyle(0x00ff00);
             }
         });
     });
 
-    // Move command
+    // Move command (right click)
     this.input.on('pointerup', pointer => {
-        selectedUnits.forEach(unit => {
-            moveUnit(unit, pointer.x, pointer.y);
-        });
+        if (selectedUnit && pointer.rightButtonDown()) {
+            let start = worldToGrid(selectedUnit.x, selectedUnit.y);
+            let end = worldToGrid(pointer.x, pointer.y);
+            selectedUnit.path = findPath(start, end);
+        }
     });
+
+    this.input.mouse.disableContextMenu();
 }
 
 function update() {
 
-    // Basic enemy AI: move toward nearest player
+    // Move player units
+    playerUnits.forEach(unit => followPath(unit));
+
+    // Enemy AI
     enemyUnits.forEach(enemy => {
-        let closest = playerUnits.reduce((a,b) =>
-            Phaser.Math.Distance.Between(enemy.x,enemy.y,a.x,a.y)
-            <
-            Phaser.Math.Distance.Between(enemy.x,enemy.y,b.x,b.y)
-            ? a : b
-        );
 
-        let dx = closest.x - enemy.x;
-        let dy = closest.y - enemy.y;
-        let len = Math.sqrt(dx*dx + dy*dy);
+        let closest = playerUnits[0];
+        let dist = Phaser.Math.Distance.Between(enemy.x, enemy.y, closest.x, closest.y);
 
-        if (len > 5) {
-            enemy.x += dx/len;
-            enemy.y += dy/len;
+        playerUnits.forEach(p => {
+            let d = Phaser.Math.Distance.Between(enemy.x, enemy.y, p.x, p.y);
+            if (d < dist) {
+                closest = p;
+                dist = d;
+            }
+        });
+
+        if (dist < 200) {
+            let start = worldToGrid(enemy.x, enemy.y);
+            let end = worldToGrid(closest.x, closest.y);
+            enemy.path = findPath(start, end);
         }
+
+        followPath(enemy);
     });
 }
 
-function moveUnit(unit, targetX, targetY) {
+function followPath(unit) {
+    if (!unit.path || unit.path.length === 0) return;
 
-    const speed = 2;
+    let next = gridToWorld(unit.path[0]);
+    let dx = next.x - unit.x;
+    let dy = next.y - unit.y;
+    let dist = Math.sqrt(dx*dx + dy*dy);
 
-    const interval = setInterval(() => {
-        let dx = targetX - unit.x;
-        let dy = targetY - unit.y;
-        let dist = Math.sqrt(dx*dx + dy*dy);
+    if (dist < 2) {
+        unit.path.shift();
+    } else {
+        unit.x += dx/dist * 1.5;
+        unit.y += dy/dist * 1.5;
+    }
+}
 
-        if (dist < 3) {
-            clearInterval(interval);
-            return;
+function worldToGrid(x, y) {
+    return {
+        x: Math.floor(x / tileSize),
+        y: Math.floor(y / tileSize)
+    };
+}
+
+function gridToWorld(node) {
+    return {
+        x: node.x * tileSize + tileSize/2,
+        y: node.y * tileSize + tileSize/2
+    };
+}
+
+function findPath(start, end) {
+
+    let open = [start];
+    let cameFrom = {};
+    let visited = {};
+
+    function key(n){ return n.x + "," + n.y; }
+
+    visited[key(start)] = true;
+
+    while (open.length > 0) {
+        let current = open.shift();
+
+        if (current.x === end.x && current.y === end.y) {
+            let path = [];
+            let k = key(current);
+            while (cameFrom[k]) {
+                path.unshift(current);
+                current = cameFrom[k];
+                k = key(current);
+            }
+            return path;
         }
 
-        unit.x += dx/dist * speed;
-        unit.y += dy/dist * speed;
+        let neighbors = [
+            {x: current.x+1, y: current.y},
+            {x: current.x-1, y: current.y},
+            {x: current.x, y: current.y+1},
+            {x: current.x, y: current.y-1}
+        ];
 
-    }, 16);
+        neighbors.forEach(n => {
+            if (
+                n.x >= 0 && n.x < cols &&
+                n.y >= 0 && n.y < rows &&
+                !grid[n.y][n.x] &&
+                !visited[key(n)]
+            ) {
+                visited[key(n)] = true;
+                cameFrom[key(n)] = current;
+                open.push(n);
+            }
+        });
+    }
+
+    return [];
 }
 
 </script>
-
 </body>
 </html>
