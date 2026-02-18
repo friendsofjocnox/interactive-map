@@ -1,214 +1,208 @@
 <!DOCTYPE html>
 <html>
 <head>
-<meta charset="utf-8">
-<title>Pangaea RTS Sandbox</title>
-<script src="https://cdn.jsdelivr.net/npm/phaser@3/dist/phaser.js"></script>
-<style>
-body { margin: 0; }
-</style>
+    <title>4-Team RTS: Battle Edition</title>
+    <style>
+        body { margin: 0; overflow: hidden; background: #1a1a1a; font-family: 'Courier New', Courier, monospace; }
+        canvas { display: block; }
+        #ui { position: absolute; top: 10px; left: 10px; color: #0f0; pointer-events: none; text-shadow: 1px 1px 2px black; }
+        .stat { color: white; font-size: 0.9em; }
+    </style>
 </head>
 <body>
+    <div id="ui">
+        <h2 id="status">4-TEAM SKIRMISH</h2>
+        <div class="stat">Blue: Player | Red/Green/Gold: AI</div>
+        <div class="stat">L-Click: Select | R-Click: Attack/Move</div>
+    </div>
+    <canvas id="gameCanvas"></canvas>
 
 <script>
-const tileSize = 32;
-const cols = 30;
-const rows = 20;
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+canvas.width = window.innerWidth;
+canvas.height = window.innerHeight;
 
-let grid = [];
-let playerUnits = [];
-let enemyUnits = [];
-let selectedUnit = null;
+const teams = ['blue', 'red', 'green', 'gold'];
+let units = [];
+let selectionBox = null;
+const ATTACK_RANGE = 50;
+const SCAN_RANGE = 150;
 
-const config = {
-    type: Phaser.AUTO,
-    width: cols * tileSize,
-    height: rows * tileSize,
-    backgroundColor: "#264653",
-    scene: { preload, create, update }
+class Unit {
+    constructor(x, y, team) {
+        this.x = x; this.y = y;
+        this.team = team;
+        this.targetPos = null;
+        this.targetEnemy = null;
+        this.selected = false;
+        this.radius = 7;
+        this.speed = 1.2;
+        this.hp = 100;
+        this.maxHp = 100;
+        this.attackCooldown = 0;
+    }
+
+    update() {
+        if (this.hp <= 0) return;
+
+        // 1. Find Enemy if idle
+        if (!this.targetEnemy || this.targetEnemy.hp <= 0) {
+            this.targetEnemy = this.findNearestEnemy();
+        }
+
+        // 2. Combat Logic
+        if (this.targetEnemy) {
+            const dist = this.getDist(this.targetEnemy);
+            if (dist < ATTACK_RANGE) {
+                this.attack();
+                return; // Stop moving to shoot
+            } else if (dist < SCAN_RANGE && !this.targetPos) {
+                // Chase if close but out of range
+                this.moveToward(this.targetEnemy.x, this.targetEnemy.y);
+            }
+        }
+
+        // 3. Movement Logic
+        if (this.targetPos) {
+            const dist = this.getDist(this.targetPos);
+            if (dist > 3) {
+                this.moveToward(this.targetPos.x, this.targetPos.y);
+            } else {
+                this.targetPos = null;
+            }
+        }
+        
+        if (this.attackCooldown > 0) this.attackCooldown--;
+    }
+
+    findNearestEnemy() {
+        let closest = null;
+        let minDist = SCAN_RANGE;
+        units.forEach(u => {
+            if (u.team !== this.team && u.hp > 0) {
+                const d = this.getDist(u);
+                if (d < minDist) {
+                    minDist = d;
+                    closest = u;
+                }
+            }
+        });
+        return closest;
+    }
+
+    moveToward(tx, ty) {
+        const dx = tx - this.x;
+        const dy = ty - this.y;
+        const dist = Math.sqrt(dx*dx + dy*dy);
+        this.x += (dx/dist) * this.speed;
+        this.y += (dy/dist) * this.speed;
+    }
+
+    attack() {
+        if (this.attackCooldown <= 0) {
+            this.targetEnemy.hp -= 10;
+            this.attackCooldown = 30; // 0.5s at 60fps
+            // Draw bullet line
+            ctx.beginPath();
+            ctx.strokeStyle = 'yellow';
+            ctx.lineWidth = 1;
+            ctx.moveTo(this.x, this.y);
+            ctx.lineTo(this.targetEnemy.x, this.targetEnemy.y);
+            ctx.stroke();
+        }
+    }
+
+    getDist(obj) {
+        return Math.sqrt((obj.x-this.x)**2 + (obj.y-this.y)**2);
+    }
+
+    draw() {
+        if (this.hp <= 0) return;
+        
+        // Body
+        ctx.beginPath();
+        ctx.arc(this.x, this.y, this.radius, 0, Math.PI*2);
+        ctx.fillStyle = this.team;
+        ctx.fill();
+        
+        // Selection Ring
+        if (this.selected) {
+            ctx.strokeStyle = 'white';
+            ctx.stroke();
+        }
+
+        // HP Bar
+        ctx.fillStyle = 'red';
+        ctx.fillRect(this.x - 10, this.y - 15, 20, 3);
+        ctx.fillStyle = '#0f0';
+        ctx.fillRect(this.x - 10, this.y - 15, 20 * (this.hp/this.maxHp), 3);
+    }
+}
+
+function initGame() {
+    units = [];
+    teams.forEach((team, t) => {
+        const startX = (t % 2) * (canvas.width - 200) + 100;
+        const startY = Math.floor(t / 2) * (canvas.height - 200) + 100;
+        for(let i=0; i<8; i++) {
+            units.push(new Unit(startX + Math.random()*60, startY + Math.random()*60, team));
+        }
+    });
+}
+
+// Mouse Controls
+let isDragging = false;
+let startX, startY;
+
+canvas.onmousedown = (e) => {
+    if (e.button === 0) {
+        isDragging = true;
+        startX = e.clientX; startY = e.clientY;
+    } else {
+        units.filter(u => u.selected).forEach(u => {
+            u.targetPos = { x: e.clientX, y: e.clientY };
+            u.targetEnemy = null;
+        });
+    }
 };
 
-new Phaser.Game(config);
+canvas.onmousemove = (e) => { if (isDragging) selectionBox = { x1: startX, y1: startY, x2: e.clientX, y2: e.clientY }; };
 
-function preload(){}
-
-function create() {
-
-    // Generate fictional "Pangaea" terrain
-    for (let y = 0; y < rows; y++) {
-        grid[y] = [];
-        for (let x = 0; x < cols; x++) {
-
-            let blocked = Math.random() < 0.15; // 15% tiles are mountains
-            grid[y][x] = blocked;
-
-            let color = blocked ? 0x5e503f : 0x2a9d8f;
-
-            this.add.rectangle(
-                x * tileSize,
-                y * tileSize,
-                tileSize,
-                tileSize,
-                color
-            ).setOrigin(0);
-        }
-    }
-
-    // Spawn player units
-    for (let i = 0; i < 4; i++) {
-        let unit = this.add.circle(60 + i*40, 60, 10, 0x00ff00);
-        unit.path = [];
-        playerUnits.push(unit);
-    }
-
-    // Spawn enemies
-    for (let i = 0; i < 3; i++) {
-        let enemy = this.add.circle(700, 400 + i*40, 10, 0xff0000);
-        enemy.path = [];
-        enemyUnits.push(enemy);
-    }
-
-    // Select unit
-    this.input.on('pointerdown', pointer => {
-        selectedUnit = null;
-        playerUnits.forEach(unit => {
-            let d = Phaser.Math.Distance.Between(pointer.x, pointer.y, unit.x, unit.y);
-            if (d < 15) {
-                selectedUnit = unit;
-                unit.setFillStyle(0xffff00);
-            } else {
-                unit.setFillStyle(0x00ff00);
-            }
-        });
-    });
-
-    // Move command (right click)
-    this.input.on('pointerup', pointer => {
-        if (selectedUnit && pointer.rightButtonDown()) {
-            let start = worldToGrid(selectedUnit.x, selectedUnit.y);
-            let end = worldToGrid(pointer.x, pointer.y);
-            selectedUnit.path = findPath(start, end);
-        }
-    });
-
-    this.input.mouse.disableContextMenu();
-}
-
-function update() {
-
-    // Move player units
-    playerUnits.forEach(unit => followPath(unit));
-
-    // Enemy AI
-    enemyUnits.forEach(enemy => {
-
-        // Find closest player
-        let closest = playerUnits[0];
-        let dist = Phaser.Math.Distance.Between(enemy.x, enemy.y, closest.x, closest.y);
-        playerUnits.forEach(p => {
-            let d = Phaser.Math.Distance.Between(enemy.x, enemy.y, p.x, p.y);
-            if (d < dist) {
-                closest = p;
-                dist = d;
-            }
-        });
-
-        // Chase player if nearby, otherwise patrol randomly
-        if (dist < 1000) { // always active for demo
-            let start = worldToGrid(enemy.x, enemy.y);
-            let end = worldToGrid(closest.x, closest.y);
-            enemy.path = findPath(start, end);
-        } else if (!enemy.path || enemy.path.length === 0) {
-            // Patrol to random tile
-            let randomTarget = {
-                x: Math.floor(Math.random() * cols),
-                y: Math.floor(Math.random() * rows)
-            };
-            enemy.path = findPath(worldToGrid(enemy.x, enemy.y), randomTarget);
-        }
-
-        followPath(enemy);
-    });
-}
-
-function followPath(unit) {
-    if (!unit.path || unit.path.length === 0) return;
-
-    let next = gridToWorld(unit.path[0]);
-    let dx = next.x - unit.x;
-    let dy = next.y - unit.y;
-    let dist = Math.sqrt(dx*dx + dy*dy);
-
-    if (dist < 2) {
-        unit.path.shift();
-    } else {
-        unit.x += dx/dist * 1.5;
-        unit.y += dy/dist * 1.5;
-    }
-}
-
-function worldToGrid(x, y) {
-    return {
-        x: Math.floor(x / tileSize),
-        y: Math.floor(y / tileSize)
-    };
-}
-
-function gridToWorld(node) {
-    return {
-        x: node.x * tileSize + tileSize/2,
-        y: node.y * tileSize + tileSize/2
-    };
-}
-
-function findPath(start, end) {
-
-    let open = [start];
-    let cameFrom = {};
-    let visited = {};
-
-    function key(n){ return n.x + "," + n.y; }
-
-    visited[key(start)] = true;
-
-    while (open.length > 0) {
-        let current = open.shift();
-
-        if (current.x === end.x && current.y === end.y) {
-            let path = [];
-            let k = key(current);
-            while (cameFrom[k]) {
-                path.unshift(current);
-                current = cameFrom[k];
-                k = key(current);
-            }
-            return path;
-        }
-
-        let neighbors = [
-            {x: current.x+1, y: current.y},
-            {x: current.x-1, y: current.y},
-            {x: current.x, y: current.y+1},
-            {x: current.x, y: current.y-1}
-        ];
-
-        neighbors.forEach(n => {
-            if (
-                n.x >= 0 && n.x < cols &&
-                n.y >= 0 && n.y < rows &&
-                !grid[n.y][n.x] &&
-                !visited[key(n)]
-            ) {
-                visited[key(n)] = true;
-                cameFrom[key(n)] = current;
-                open.push(n);
+canvas.onmouseup = () => {
+    if (isDragging && selectionBox) {
+        units.forEach(u => {
+            if (u.team === 'blue') {
+                u.selected = u.x > Math.min(selectionBox.x1, selectionBox.x2) &&
+                             u.x < Math.max(selectionBox.x1, selectionBox.x2) &&
+                             u.y > Math.min(selectionBox.y1, selectionBox.y2) &&
+                             u.y < Math.max(selectionBox.y1, selectionBox.y2);
             }
         });
     }
+    isDragging = false;
+    selectionBox = null;
+};
 
-    return [];
+window.oncontextmenu = (e) => e.preventDefault();
+
+function loop() {
+    ctx.fillStyle = '#1a2b1a'; // Dark Forest
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    units = units.filter(u => u.hp > 0); // Cleanup dead
+    units.forEach(u => { u.update(); u.draw(); });
+
+    if (selectionBox) {
+        ctx.strokeStyle = 'rgba(0, 255, 0, 0.5)';
+        ctx.strokeRect(selectionBox.x1, selectionBox.y1, selectionBox.x2 - selectionBox.x1, selectionBox.y2 - selectionBox.y1);
+    }
+
+    requestAnimationFrame(loop);
 }
 
+initGame();
+loop();
 </script>
 </body>
 </html>
