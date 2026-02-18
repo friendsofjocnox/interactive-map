@@ -2,83 +2,64 @@
 <html>
 <head>
 <meta charset="utf-8">
-<title>4 Team RTS</title>
-<script src="https://cdn.jsdelivr.net/npm/phaser@3/dist/phaser.js"></script>
+<title>Pangaea Turn RTS</title>
 </head>
 <body>
 
+<h2>Pangaea Turn-Based RTS</h2>
+<button onclick="moveUnit()">Move Blue Unit</button>
+
 <script>
-let socket = new WebSocket("ws://localhost:8080");
 
-let teamColor = "white";
-let units = [];
-let boss;
+const owner = "YOUR_GITHUB_USERNAME";
+const repo = "pangea-rts";
+const path = "game-state.json";
+const token = "YOUR_PERSONAL_ACCESS_TOKEN";
 
-const config = {
-    type: Phaser.AUTO,
-    width: 1000,
-    height: 600,
-    scene: { create, update }
-};
+let state = null;
+let sha = null;
 
-new Phaser.Game(config);
+async function loadState() {
+    const res = await fetch(
+        `https://api.github.com/repos/${owner}/${repo}/contents/${path}`
+    );
 
-socket.onmessage = (event) => {
-    const data = JSON.parse(event.data);
+    const data = await res.json();
+    sha = data.sha;
 
-    if (data.type === "init") {
-        teamColor = data.team;
-    }
-
-    if (data.type === "update") {
-        updateGame(data.gameState);
-    }
-};
-
-function create() {
-    this.input.on('pointerdown', pointer => {
-        socket.send(JSON.stringify({
-            type: "move",
-            team: teamColor,
-            x: pointer.x,
-            y: pointer.y
-        }));
-    });
+    state = JSON.parse(atob(data.content));
+    console.log("Loaded state:", state);
 }
 
-function updateGame(state) {
+async function moveUnit() {
 
-    units.forEach(u => u.destroy());
-    units = [];
+    state.teams.blue.units[0].x += 20;
+    state.turn += 1;
 
-    state.units.forEach(u => {
-        let color = {
-            blue: 0x0000ff,
-            green: 0x00ff00,
-            yellow: 0xffff00,
-            purple: 0x800080
-        }[u.team];
+    const content = btoa(JSON.stringify(state, null, 2));
 
-        units.push(
-            game.scene.scenes[0].add.circle(u.x, u.y, 10, color)
-        );
-    });
+    await fetch(
+        `https://api.github.com/repos/${owner}/${repo}/contents/${path}`,
+        {
+            method: "PUT",
+            headers: {
+                "Authorization": `token ${token}`,
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+                message: "Player move",
+                content: content,
+                sha: sha
+            })
+        }
+    );
 
-    if (!boss) {
-        boss = game.scene.scenes[0].add.circle(
-            state.boss.x,
-            state.boss.y,
-            20,
-            0xff0000
-        );
-    } else {
-        boss.x = state.boss.x;
-        boss.y = state.boss.y;
-    }
+    await loadState();
 }
 
-function update(){}
+loadState();
+setInterval(loadState, 5000);
+
 </script>
-
 </body>
 </html>
