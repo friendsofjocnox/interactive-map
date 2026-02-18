@@ -1,100 +1,136 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <title>Global RTS Multiplayer</title>
+    <meta charset="UTF-8">
+    <title>Global Conquest RTS</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <style>
-        body, html, #map { margin: 0; height: 100%; background: #001529; }
-        #ui { position: absolute; top: 10px; left: 50px; z-index: 1000; background: rgba(0,0,0,0.8); color: #0f0; padding: 10px; border: 1px solid #0f0; font-family: monospace; pointer-events: none; }
+        body, html, #map { margin: 0; height: 100%; background: #0b141a; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+        #ui-overlay {
+            position: absolute; top: 20px; left: 20px; z-index: 1000;
+            background: rgba(0, 0, 0, 0.85); color: white; padding: 15px;
+            border-radius: 8px; border: 1px solid #333; pointer-events: none;
+        }
+        .team-indicator { display: inline-block; width: 12px; height: 12px; border-radius: 50%; margin-right: 5px; }
     </style>
 </head>
 <body>
-    <div id="ui">
-        <b>WORLD CONQUEST: MULTIPLAYER</b><br>
-        Status: <span id="conn-status">Connecting...</span><br>
-        Units: Right-Click map to deploy/move.
+
+    <div id="ui-overlay">
+        <h2 style="margin:0 0 10px 0;">Global RTS</h2>
+        <div>Status: <span id="status" style="color: #0f0;">Connecting...</span></div>
+        <div>Your Team: <span id="team-name">-</span> <span id="team-color" class="team-indicator"></span></div>
+        <hr style="border: 0; border-top: 1px solid #444; margin: 10px 0;">
+        <small>
+            • <b>Left Click:</b> Deploy Unit<br>
+            • <b>Right Click:</b> Move Selected<br>
+            • <b>Goal:</b> Defeat the Black (AI) units!
+        </small>
     </div>
+
     <div id="map"></div>
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 
     <script>
-        // --- CONFIGURATION ---
-        const SUPABASE_URL = 'YOUR_SUPABASE_URL';
-        const SUPABASE_KEY = 'YOUR_SUPABASE_ANON_KEY';
-        const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+        // --- 1. SETTINGS (Replace these!) ---
+        const SUPABASE_URL = 'https://hfripibhhypbvnoimzdr.supabase.co';
+        const SUPABASE_KEY = 'sb_publishable_vcf3Bd9FD5vf-1HnUnwqNg_GRUvUw3u';
 
-        // --- MAP SETUP ---
-        const map = L.map('map', { attributionControl: false }).setView([20, 0], 3);
+        // --- 2. GAME VARIABLES ---
+        const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+        const myId = Math.random().toString(36).substring(7);
+        const teams = ['#3498db', '#e74c3c', '#2ecc71', '#f1c40f']; // Blue, Red, Green, Gold
+        const myColor = teams[Math.floor(Math.random() * teams.length)];
+        
+        document.getElementById('team-name').innerText = myColor;
+        document.getElementById('team-color').style.backgroundColor = myColor;
+
+        // Initialize Map
+        const map = L.map('map', { zoomControl: false }).setView([20, 0], 2);
         L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png').addTo(map);
 
-        // --- GAME STATE ---
-        const myClientId = Math.random().toString(36).substring(7);
-        const myTeam = ['blue', 'red', 'green', 'gold'][Math.floor(Math.random() * 4)];
-        const units = {}; // Global store: { unitId: LeafletMarker }
+        const units = {}; // Store all units on map
 
-        const channel = supabase.channel('world-war-1', {
+        // --- 3. MULTIPLAYER CONNECTION ---
+        const channel = supabase.channel('global-war', {
             config: { broadcast: { self: true } }
         });
 
-        // --- MULTIPLAYER LOGIC ---
         channel
-            .on('broadcast', { event: 'move' }, ({ payload }) => {
-                updateUnitPosition(payload);
+            .on('broadcast', { event: 'unit_update' }, ({ payload }) => {
+                renderUnit(payload);
             })
             .subscribe((status) => {
-                if (status === 'SUBSCRIBED') document.getElementById('conn-status').innerText = `Online (${myTeam})`;
+                if (status === 'SUBSCRIBED') document.getElementById('status').innerText = "Online";
             });
 
-        function updateUnitPosition(data) {
-            const { id, lat, lng, team } = data;
+        // --- 4. CORE FUNCTIONS ---
+        function renderUnit(data) {
+            const { id, lat, lng, color, hp } = data;
+            
             if (!units[id]) {
-                // Create new unit marker
+                // Create unit marker
                 units[id] = L.circleMarker([lat, lng], {
-                    radius: 8,
-                    fillColor: team,
+                    radius: 7,
+                    fillColor: color,
                     color: '#fff',
-                    fillOpacity: 0.8
+                    weight: 2,
+                    fillOpacity: 1
                 }).addTo(map);
-                units[id].bindTooltip(`Team: ${team}`).openTooltip();
+                units[id].unitData = data;
             } else {
-                // Move existing unit smoothly (Simplified for this demo)
+                // Update unit position
                 units[id].setLatLng([lat, lng]);
+                units[id].unitData = data;
+                
+                // Remove if dead
+                if (hp <= 0) {
+                    map.removeLayer(units[id]);
+                    delete units[id];
+                }
             }
         }
 
-        // --- INPUTS ---
-        map.on('contextmenu', (e) => {
-            const unitId = `${myClientId}_${Date.now()}`;
-            const moveData = {
-                id: unitId,
-                lat: e.latlng.lat,
-                lng: e.latlng.lng,
-                team: myTeam
-            };
-
-            // Broadcast move to all players
-            channel.send({
-                type: 'broadcast',
-                event: 'move',
-                payload: moveData
-            });
+        // Deploy Unit (Left Click)
+        map.on('click', (e) => {
+            const unitId = 'u_' + myId + '_' + Date.now();
+            broadcastUnit(unitId, e.latlng.lat, e.latlng.lng, 100);
         });
 
-        // --- ENEMY AI (Simulated by Host) ---
-        // In a real game, the first player in 'presence' would run this.
+        // Move Unit (Right Click - Simplified for 1 unit)
+        map.on('contextmenu', (e) => {
+            // Find one of my units to move
+            for (let id in units) {
+                if (units[id].unitData.color === myColor) {
+                    broadcastUnit(id, e.latlng.lat, e.latlng.lng, units[id].unitData.hp);
+                    break; 
+                }
+            }
+        });
+
+        function broadcastUnit(id, lat, lng, hp) {
+            channel.send({
+                type: 'broadcast',
+                event: 'unit_update',
+                payload: { id, lat, lng, color: myColor, hp }
+            });
+        }
+
+        // --- 5. THE ENEMY (AI) ---
+        // Every 5 seconds, a random "Black" enemy unit appears
         setInterval(() => {
-            const enemyId = 'ai_bot_1';
-            const randomLat = 20 + (Math.random() - 0.5) * 10;
-            const randomLng = (Math.random() - 0.5) * 10;
+            const aiId = 'ai_' + Math.floor(Math.random() * 100);
+            const lat = (Math.random() * 120) - 60;
+            const lng = (Math.random() * 360) - 180;
             
             channel.send({
                 type: 'broadcast',
-                event: 'move',
-                payload: { id: enemyId, lat: randomLat, lng: randomLng, team: 'white' }
+                event: 'unit_update',
+                payload: { id: aiId, lat, lng, color: '#000', hp: 50 }
             });
-        }, 3000);
+        }, 8000);
 
     </script>
 </body>
