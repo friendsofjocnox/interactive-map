@@ -33,34 +33,51 @@
 const SUPABASE_URL = 'https://hfripibhhypbvnoimzdr.supabase.co';
 const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImhmcmlwaWJoaHlwYnZub2ltemRyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzEzOTQ1NjYsImV4cCI6MjA4Njk3MDU2Nn0.h_uP2EVvjJMoPlcUFGOiaKOj6JFdspnYvC2OqR5a10g';
 
-<!DOCTYPE html>
-<html>
-<head>
-    <title>Global RTS</title>
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-    <style>
-        /* This part prevents the black/invisible screen */
-        body, html { margin: 0; padding: 0; height: 100%; width: 100%; overflow: hidden; }
-        #map { height: 100vh; width: 100vw; background: #0b141a; }
+// 2. SETUP MAP FIRST
+        // We use a standard map tile to ensure it's not a "dark mode" loading error
+        const map = L.map('map').setView([20, 0], 2);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+
+        // 3. SETUP SUPABASE (Using 'gameServer' to avoid errors)
+        const gameServer = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+        const myId = Math.random().toString(36).substring(7);
+        const myColor = ['#3498db', '#e74c3c', '#2ecc71', '#f1c40f'][Math.floor(Math.random() * 4)];
         
-        #ui-overlay {
-            position: absolute; top: 10px; left: 10px; z-index: 1000;
-            background: rgba(0, 0, 0, 0.8); color: white; padding: 15px;
-            border-radius: 5px; font-family: sans-serif; pointer-events: none;
-        }
-    </style>
-</head>
-<body>
+        document.getElementById('team-name').innerText = myColor;
+        document.getElementById('team-name').style.color = myColor;
 
-    <div id="ui-overlay">
-        <h2 style="margin:0">World RTS</h2>
-        Status: <span id="status" style="color: orange;">Connecting...</span><br>
-        Team: <span id="team-name">...</span>
-    </div>
+        const units = {};
 
-    <div id="map"></div>
+        // 4. CONNECTION LOGIC
+        const channel = gameServer.channel('global-war', { config: { broadcast: { self: true } } });
 
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+        channel.subscribe((status) => {
+            if (status === 'SUBSCRIBED') {
+                document.getElementById('status').innerText = "Online";
+                document.getElementById('status').style.color = "#0f0";
+            }
+        });
 
-    <script>
+        // 5. CLICK TO DEPLOY
+        map.on('click', (e) => {
+            const unitId = 'u_' + myId + '_' + Date.now();
+            channel.send({
+                type: 'broadcast',
+                event: 'unit_update',
+                payload: { id: unitId, lat: e.latlng.lat, lng: e.latlng.lng, color: myColor, hp: 100 }
+            });
+        });
+
+        // 6. SHOW UNITS
+        channel.on('broadcast', { event: 'unit_update' }, ({ payload }) => {
+            if (!units[payload.id]) {
+                units[payload.id] = L.circleMarker([payload.lat, payload.lng], {
+                    radius: 10, fillColor: payload.color, color: '#fff', weight: 2, fillOpacity: 1
+                }).addTo(map);
+            } else {
+                units[payload.id].setLatLng([payload.lat, payload.lng]);
+            }
+        });
+    </script>
+</body>
+</html>
