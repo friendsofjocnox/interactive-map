@@ -1,60 +1,98 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Global Conquest: Battle & Intel</title>
+    <title>Global Command: Tactical Operations</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <style>
+        /* CORE LAYOUT */
         body, html { margin: 0; padding: 0; height: 100%; width: 100%; overflow: hidden; background: #050a0e; font-family: 'Courier New', monospace; }
-        #map { height: 100vh; width: 100vw; background: #050a0e; }
+        #map { height: 100vh; width: 100vw; background: #050a0e; cursor: crosshair; }
         
-        .ui-panel {
-            position: absolute; z-index: 1000; background: rgba(0,10,20,0.9); color: #0f0; 
-            padding: 12px; border: 1px solid #0f0; border-radius: 4px; pointer-events: auto;
+        /* AUTH SCREEN */
+        #auth-overlay {
+            position: fixed; inset: 0; background: #000; z-index: 9999;
+            display: flex; flex-direction: column; align-items: center; justify-content: center; color: #0f0;
         }
-        #player-ui { top: 10px; left: 10px; width: 240px; }
-        #casualty-ui { bottom: 20px; right: 20px; width: 200px; font-size: 12px; }
-        #gm-ui { top: 10px; right: 10px; display: none; width: 260px; }
+        #auth-box { border: 1px solid #0f0; padding: 20px; text-align: center; box-shadow: 0 0 20px rgba(0, 255, 0, 0.2); }
+        input, select { background: #001100; color: #0f0; border: 1px solid #0f0; padding: 10px; margin: 5px; font-family: inherit; width: 200px; }
         
-        button { cursor: pointer; background: #002200; color: #0f0; border: 1px solid #0f0; padding: 4px 8px; margin: 2px 0; width: 100%; text-align: left; }
+        /* UI PANELS */
+        .ui-panel {
+            position: absolute; z-index: 1000; background: rgba(0, 10, 15, 0.9); color: #0f0; 
+            padding: 10px; border: 1px solid #004400; border-radius: 4px; pointer-events: auto;
+            box-shadow: 0 0 10px rgba(0,0,0,0.5);
+        }
+        #player-ui { top: 10px; left: 10px; width: 250px; }
+        #casualty-ui { bottom: 20px; right: 20px; min-width: 200px; font-size: 11px; }
+        #gm-ui { top: 10px; right: 10px; display: none; width: 280px; max-height: 80vh; overflow-y: auto; }
+        
+        /* BUTTONS */
+        button { cursor: pointer; background: #002200; color: #0f0; border: 1px solid #0f0; padding: 5px; margin: 2px 0; width: 100%; text-align: left; font-family: inherit; transition: 0.2s; }
         button:hover { background: #0f0; color: #000; }
+        .active-btn { background: #ff00ff !important; color: #fff !important; }
+
+        /* MARKER STYLES */
         .death-marker { color: red; font-weight: bold; font-size: 20px; text-shadow: 0 0 5px black; }
-        .selection-box { border: 1px solid #0f0; background: rgba(0, 255, 0, 0.05); position: absolute; z-index: 2000; pointer-events: none; }
+        .hp-label { 
+            background: none; border: none; box-shadow: none; 
+            color: white; font-size: 10px; font-weight: bold; text-shadow: 1px 1px 2px black;
+            margin-top: -30px; 
+        }
+        .leaflet-div-icon { background: none; border: none; }
+        .selection-box { border: 2px dashed #0f0; background: rgba(0, 255, 0, 0.1); position: absolute; z-index: 2000; pointer-events: none; }
+        
+        /* GM PANEL */
+        #requests { max-height: 150px; overflow: auto; border-bottom: 1px solid #444; margin-bottom: 5px; }
+        .gm-request { border-bottom: 1px dotted #444; padding: 5px; display: flex; justify-content: space-between; }
     </style>
 </head>
 <body>
 
-    <div id="auth-overlay" style="position:fixed; inset:0; background:black; z-index:9999; display:flex; flex-direction:column; align-items:center; justify-content:center; color:#0f0;">
-        <h1>NET-WAR TERMINAL</h1>
-        <select id="role-select" style="background:#000; color:#0f0; border:1px solid #0f0; padding:10px;">
-            <option value="1">TEAM 1 (BLUE)</option><option value="2">TEAM 2 (RED)</option>
-            <option value="3">TEAM 3 (GREEN)</option><option value="4">TEAM 4 (GOLD)</option>
-            <option value="GM">GAME MASTER</option><option value="OBS">OBSERVER</option>
-        </select><br>
-        <input type="password" id="access-code" placeholder="ACCESS CODE" style="background:#000; color:#0f0; border:1px solid #0f0; padding:10px;"><br>
-        <button onclick="login()" style="width:200px; text-align:center;">CONNECT</button>
+    <div id="auth-overlay">
+        <div id="auth-box">
+            <h1>NET-WAR: GLOBAL OPS</h1>
+            <select id="role-select">
+                <option value="1">TEAM 1 (BLUE)</option>
+                <option value="2">TEAM 2 (RED)</option>
+                <option value="3">TEAM 3 (GREEN)</option>
+                <option value="4">TEAM 4 (GOLD)</option>
+                <option value="GM">GAME MASTER</option>
+                <option value="OBS">OBSERVER (INTEL)</option>
+            </select><br>
+            <input type="password" id="access-code" placeholder="ENTER ACCESS CODE"><br>
+            <button onclick="login()">AUTHORIZE CONNECTION</button>
+        </div>
     </div>
 
-    <div id="player-ui" class="ui-panel">
+    <div id="player-ui" class="ui-panel" style="display: none;">
         <b id="role-display">Unit Command</b><hr>
-        Bank: <span id="unit-bank">0</span> | HP: <span id="stat-hp">100</span><br>
-        <button onclick="request('unit')">Request Reinforcements</button>
-        <button onclick="request('hp')">Request Armor (HP)</button>
+        RESERVES: <span id="unit-bank">0</span> | ARMOR: <span id="stat-hp">100</span><br>
+        <button onclick="request('unit')">>> REQUEST REINFORCEMENTS</button>
+        <button onclick="request('hp')">>> REQUEST ARMOR UPGRADE</button>
         <hr>
-        Selected: <span id="select-count">0</span><br>
-        <button onclick="setOrder('patrol')">State: PATROL</button>
-        <button onclick="setOrder('hold')">State: HOLD</button>
-        <small style="color:#888;">Right-Click map to MOVE</small>
+        SELECTED: <span id="select-count">0</span><br>
+        <button onclick="setOrder('patrol')">STATE: PATROL (AUTONOMOUS)</button>
+        <button onclick="setOrder('hold')">STATE: HOLD POSITION</button>
+        <small style="color:#666;">
+            • SHIFT+DRAG: SELECT<br>
+            • RIGHT-CLICK: MOVE<br>
+            • CLICK: DEPLOY (IF RESERVES > 0)
+        </small>
     </div>
 
-    <div id="casualty-ui" class="ui-panel">
-        <b>CASUALTY REPORT</b><hr>
+    <div id="casualty-ui" class="ui-panel" style="display: none;">
+        <b>BATTLE REPORT (K.I.A.)</b><hr>
         <div id="death-list">T1: 0 | T2: 0 | T3: 0 | T4: 0 | AI: 0</div>
     </div>
 
     <div id="gm-ui" class="ui-panel">
-        <b>GM CONSOLE</b><hr>
-        <div id="requests" style="max-height:100px; overflow:auto;"></div><hr>
-        <button onclick="isEnemySpawner = !isEnemySpawner">SPAWN ENEMY (CLICK)</button>
+        <b>COMMAND CONSOLE (GM)</b><hr>
+        <b>ACTIVE APPEALS:</b>
+        <div id="requests">No active appeals.</div>
+        <hr>
+        <b>TOOLS:</b>
+        <button id="spawn-btn" onclick="toggleEnemySpawner()">SPAWN ENEMY (CLICK MAP)</button>
+        <button onclick="clearDead()">CLEAR DEAD MARKERS</button>
     </div>
 
     <div id="map"></div>
@@ -63,134 +101,232 @@
     <script type="module">
         import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm'
 
+        // --- CONFIGURATION ---
         const SUPABASE_URL = 'https://hfripibhhypbvnoimzdr.supabase.co';
         const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImhmcmlwaWJoaHlwYnZub2ltemRyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzEzOTQ1NjYsImV4cCI6MjA4Njk3MDU2Nn0.h_uP2EVvjJMoPlcUFGOiaKOj6JFdspnYvC2OqR5a10g';
+        
+        // --- STATE ---
         const gameServer = createClient(SUPABASE_URL, SUPABASE_KEY);
+        const map = L.map('map', { 
+            zoomControl: false, 
+            boxZoom: false, 
+            doubleClickZoom: false,
+            attributionControl: false 
+        }).setView([20, 0], 3);
 
-        const map = L.map('map', { zoomControl: false, boxZoom: false, doubleClickZoom: false }).setView([20, 0], 3);
+        // Dark Map Tiles
         L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png').addTo(map);
 
         let userRole = null;
         let unitBank = 0;
         let baseHp = 100;
-        let isEnemySpawner = false;
         let selectedIds = new Set();
-        const units = {}; 
+        const units = {}; // Stores all active units
         const casualties = { "1":0, "2":0, "3":0, "4":0, "ENEMY":0 };
-        const teamColors = { "1": "#0077ff", "2": "#ff3333", "3": "#33ff33", "4": "#ffcc00", "GM": "#fff", "ENEMY": "#ff00ff" };
+        
+        // Colors for Teams
+        const teamColors = { 
+            "1": "#0077ff", // Blue
+            "2": "#ff3333", // Red
+            "3": "#33ff33", // Green
+            "4": "#ffcc00", // Gold
+            "GM": "#ffffff",
+            "ENEMY": "#ff00ff" // Magenta for AI/Enemy
+        };
 
+        // Connect to Realtime Channel
         const channel = gameServer.channel('global-war', { config: { broadcast: { self: true } } });
 
+        // --- GLOBAL FUNCTIONS (Window Binding) ---
+        window.isEnemySpawner = false;
+
         window.login = () => {
-            if (document.getElementById('access-code').value === '1234') { 
+            const code = document.getElementById('access-code').value;
+            // Password is '1234'
+            if (code === '1234') { 
                 userRole = document.getElementById('role-select').value;
                 document.getElementById('auth-overlay').style.display = 'none';
-                if(userRole === 'GM') document.getElementById('gm-ui').style.display = 'block';
+                
+                // Show Correct UI
+                if(userRole === 'GM') {
+                    document.getElementById('gm-ui').style.display = 'block';
+                    document.getElementById('casualty-ui').style.display = 'block';
+                } else {
+                    document.getElementById('player-ui').style.display = 'block';
+                    document.getElementById('casualty-ui').style.display = 'block';
+                    document.getElementById('role-display').innerText = "TEAM " + userRole + " COMMAND";
+                    document.getElementById('role-display').style.color = teamColors[userRole];
+                }
+                
+                // Start the Simulation Loop
                 startSim();
+            } else {
+                alert("ACCESS DENIED: INCORRECT CODE");
             }
         };
 
-        // Inside your script module
-window.isEnemySpawner = false; // Global toggle
-
-window.toggleEnemySpawner = () => {
-    window.isEnemySpawner = !window.isEnemySpawner;
-    const btn = document.getElementById('spawn-btn');
-    if (window.isEnemySpawner) {
-        btn.style.background = '#ff00ff'; // Magenta when active
-        btn.style.color = '#fff';
-        btn.innerText = "STATUS: SPAWNING ENEMY";
-    } else {
-        btn.style.background = '#002200';
-        btn.style.color = '#0f0';
-        btn.innerText = "SPAWN ENEMY (CLICK)";
-    }
-};
-
-// Also fix the grant function scoping
-window.grant = (team, type, btn) => {
-    channel.send({ type: 'broadcast', event: 'gm_grant', payload: { team, type } });
-    btn.parentElement.remove();
-};
-
-        // --- BROADCAST HANDLERS ---
-        channel.on('broadcast', { event: 'unit_sync' }, ({ payload }) => {
-            if (payload.hp <= 0) return handleDeath(payload);
-            updateUnit(payload);
-        }).on('broadcast', { event: 'combat_fx' }, ({ payload }) => {
-            drawTracer(payload.from, payload.to);
-        }).on('broadcast', { event: 'appeal' }, ({ payload }) => {
-            if (userRole === 'GM') addAppeal(payload);
-        }).on('broadcast', { event: 'gm_grant' }, ({ payload }) => {
-            if (payload.team === userRole) {
-                if(payload.type === 'unit') unitBank++;
-                if(payload.type === 'hp') baseHp += 50;
-                document.getElementById('unit-bank').innerText = unitBank;
-                document.getElementById('stat-hp').innerText = baseHp;
+        window.toggleEnemySpawner = () => {
+            window.isEnemySpawner = !window.isEnemySpawner;
+            const btn = document.getElementById('spawn-btn');
+            if (window.isEnemySpawner) {
+                btn.classList.add('active-btn');
+                btn.innerText = "STATUS: SPAWNING (CLICK MAP)";
+            } else {
+                btn.classList.remove('active-btn');
+                btn.innerText = "SPAWN ENEMY (CLICK MAP)";
             }
-        }).subscribe();
+        };
+
+        window.request = (type) => {
+            channel.send({ type: 'broadcast', event: 'appeal', payload: { team: userRole, type } });
+            alert("Appeal sent to GM.");
+        };
+
+        window.grant = (team, type, btnId) => {
+            channel.send({ type: 'broadcast', event: 'gm_grant', payload: { team, type } });
+            document.getElementById(btnId).remove();
+        };
+
+        window.setOrder = (state) => {
+            selectedIds.forEach(id => {
+                if (units[id]) units[id].state = state;
+            });
+        };
+
+        window.clearDead = () => {
+            map.eachLayer(layer => {
+                if (layer.options.icon && layer.options.icon.options.className === 'death-marker') {
+                    map.removeLayer(layer);
+                }
+            });
+        };
+
+        // --- NETWORK LISTENERS ---
+        channel
+            .on('broadcast', { event: 'unit_sync' }, ({ payload }) => {
+                if (payload.hp <= 0) return handleDeath(payload);
+                updateUnit(payload);
+            })
+            .on('broadcast', { event: 'combat_fx' }, ({ payload }) => {
+                drawTracer(payload.from, payload.to);
+            })
+            .on('broadcast', { event: 'appeal' }, ({ payload }) => {
+                if (userRole === 'GM') addAppealUI(payload);
+            })
+            .on('broadcast', { event: 'gm_grant' }, ({ payload }) => {
+                if (payload.team === userRole) {
+                    if (payload.type === 'unit') unitBank++;
+                    if (payload.type === 'hp') baseHp += 50;
+                    document.getElementById('unit-bank').innerText = unitBank;
+                    document.getElementById('stat-hp').innerText = baseHp;
+                }
+            })
+            .subscribe();
+
+        // --- CORE GAME LOGIC ---
 
         function updateUnit(data) {
-    const { id, lat, lng, team, hp } = data;
-    
-    // --- FOG OF WAR LOGIC ---
-    // The GM sees everything. Everyone else follows Intel rules.
-    if (userRole !== 'GM') {
-        if (team === 'ENEMY') {
-            // Check if any friendly units are nearby to "spot" this enemy
-            const myUnits = Object.values(units).filter(u => 
-                userRole === 'OBS' ? u.team !== 'ENEMY' : u.team === userRole
-            );
+            const { id, lat, lng, team, hp } = data;
             
-            // Detection Radius: 600km
-            const isDetected = myUnits.some(u => map.distance(u.getLatLng(), [lat, lng]) < 600000); 
+            // 1. FOG OF WAR (Crucial Logic)
+            if (userRole !== 'GM') { // GM sees all
+                if (team === 'ENEMY') {
+                    // Check if any friendly unit is close enough (600km) to spot this enemy
+                    const myUnits = Object.values(units).filter(u => 
+                        userRole === 'OBS' ? u.team !== 'ENEMY' : u.team === userRole
+                    );
+                    const isVisible = myUnits.some(u => map.distance(u.getLatLng(), [lat, lng]) < 600000); 
+                    
+                    if (!isVisible) {
+                        // If not visible, remove it from map and stop processing
+                        if (units[id]) { map.removeLayer(units[id]); delete units[id]; }
+                        return;
+                    }
+                }
+            }
+
+            // 2. RENDER / CREATE UNIT
+            if (!units[id]) {
+                units[id] = L.circleMarker([lat, lng], {
+                    radius: team === 'ENEMY' ? 10 : 8,
+                    fillColor: teamColors[team] || '#fff',
+                    color: '#fff',
+                    weight: 1,
+                    fillOpacity: 0.9
+                }).addTo(map);
+
+                // Add Health Label
+                units[id].bindTooltip(hp.toString(), { 
+                    permanent: true, 
+                    direction: 'top', 
+                    className: 'hp-label' 
+                });
+
+                units[id].id = id;
+                units[id].team = team;
+            }
+
+            // 3. UPDATE POSITION & DATA
+            units[id].setLatLng([lat, lng]);
+            units[id].setTooltipContent(hp.toString()); // Update HP text
+            units[id].hp = hp;
+            units[id].target = data.target;
+            units[id].state = data.state;
             
-            if (!isDetected) {
-                if (units[id]) { map.removeLayer(units[id]); delete units[id]; }
-                return; // Hide enemy and stop processing
+            // Visual selection highlight
+            if (selectedIds.has(id)) {
+                units[id].setStyle({ color: 'cyan', weight: 3 });
+            } else {
+                units[id].setStyle({ color: '#fff', weight: 1 });
             }
         }
-    }
-
-    // --- RENDER UNIT ---
-    if (!units[id]) {
-        units[id] = L.circleMarker([lat, lng], { 
-            radius: team === 'ENEMY' ? 10 : 8, 
-            fillColor: teamColors[team], 
-            color: '#fff', 
-            weight: 1, 
-            fillOpacity: 0.9 
-        }).addTo(map);
-        
-        units[id].id = id; 
-        units[id].team = team;
-    }
-    
-    units[id].setLatLng([lat, lng]);
-    units[id].hp = hp;
-    units[id].target = data.target;
-    units[id].state = data.state;
-}
 
         function handleDeath(data) {
             if (units[data.id]) {
                 const pos = units[data.id].getLatLng();
                 map.removeLayer(units[data.id]);
                 delete units[data.id];
-                const x = L.marker(pos, { icon: L.divIcon({ className: 'death-marker', html: 'X' }) }).addTo(map);
-                setTimeout(() => map.removeLayer(x), 10000);
+                selectedIds.delete(data.id);
+
+                // Place 'X' marker
+                const x = L.marker(pos, { 
+                    icon: L.divIcon({ className: 'death-marker', html: 'X', iconSize: [20, 20] }) 
+                }).addTo(map);
+                
+                // Update Casualty Count
                 casualties[data.team]++;
                 updateCasualtyUI();
             }
         }
 
-        // --- INTERACTION ---
+        function drawTracer(from, to) {
+            // Only draw if within view bounds to save performance
+            if (!map.getBounds().contains(from) && !map.getBounds().contains(to)) return;
+
+            const line = L.polyline([from, to], { 
+                color: '#ff0000', 
+                weight: 2, 
+                opacity: 0.8,
+                dashArray: '5, 10' 
+            }).addTo(map);
+            
+            // Remove after 150ms for "flicker" effect
+            setTimeout(() => map.removeLayer(line), 150);
+        }
+
+        // --- INTERACTION (Mouse & Keyboard) ---
+
+        // 1. Shift + Drag Selection
         let startPoint, selBox;
         map.on('mousedown', (e) => {
             if (!e.originalEvent.shiftKey) return;
+            map.dragging.disable();
             startPoint = e.containerPoint;
-            selBox = document.createElement('div'); selBox.className = 'selection-box'; document.body.appendChild(selBox);
+            selBox = document.createElement('div');
+            selBox.className = 'selection-box';
+            document.body.appendChild(selBox);
         });
+
         map.on('mousemove', (e) => {
             if (!startPoint) return;
             const p = e.containerPoint;
@@ -199,23 +335,30 @@ window.grant = (team, type, btn) => {
             selBox.style.width = Math.abs(startPoint.x - p.x) + 'px';
             selBox.style.height = Math.abs(startPoint.y - p.y) + 'px';
         });
+
         map.on('mouseup', (e) => {
             if (!startPoint) return;
             const end = e.containerPoint;
-            selectedIds.clear();
+            selectedIds.clear(); // Clear old selection
+
+            // Find units inside the box
             Object.values(units).forEach(u => {
                 if (u.team === userRole) {
                     const p = map.latLngToContainerPoint(u.getLatLng());
                     if (p.x >= Math.min(startPoint.x, end.x) && p.x <= Math.max(startPoint.x, end.x) &&
                         p.y >= Math.min(startPoint.y, end.y) && p.y <= Math.max(startPoint.y, end.y)) {
-                        selectedIds.add(u.id); u.setStyle({ weight: 4, color: 'cyan' });
-                    } else { u.setStyle({ weight: 1, color: '#fff' }); }
+                        selectedIds.add(u.id);
+                    }
                 }
             });
+
             document.getElementById('select-count').innerText = selectedIds.size;
-            document.body.removeChild(selBox); startPoint = null;
+            document.body.removeChild(selBox);
+            startPoint = null;
+            map.dragging.enable();
         });
 
+        // 2. Right Click (Move Order)
         map.on('contextmenu', (e) => {
             if (selectedIds.size > 0) {
                 selectedIds.forEach(id => {
@@ -224,89 +367,112 @@ window.grant = (team, type, btn) => {
                         units[id].state = 'move';
                     }
                 });
+                // Prevent browser context menu
+                e.originalEvent.preventDefault();
             }
         });
 
+        // 3. Left Click (Deploy / Spawn)
         map.on('click', (e) => {
-            if (userRole === 'GM' && isEnemySpawner) {
+            if (userRole === 'GM' && window.isEnemySpawner) {
+                // GM Spawn
                 broadcastUnit('u_'+Math.random(), e.latlng.lat, e.latlng.lng, 'ENEMY', 300);
             } else if (unitBank > 0 && userRole !== 'GM' && userRole !== 'OBS') {
+                // Player Spawn
                 broadcastUnit('u_'+Math.random(), e.latlng.lat, e.latlng.lng, userRole, baseHp);
-                unitBank--; document.getElementById('unit-bank').innerText = unitBank;
+                unitBank--; 
+                document.getElementById('unit-bank').innerText = unitBank;
+            } else if (selectedIds.size > 0 && !e.originalEvent.shiftKey) {
+                // Click off to deselect
+                selectedIds.clear();
+                document.getElementById('select-count').innerText = 0;
             }
         });
 
-        function broadcastUnit(id, lat, lng, team, hp, target=null, state='hold') {
-            channel.send({ type:'broadcast', event:'unit_sync', payload:{ id, lat, lng, team, hp, target, state }});
-        }
-
-        // --- SIMULATION LOOP ---
+        // --- SIMULATION LOOP (The "Game Engine") ---
         function startSim() {
             setInterval(() => {
+                // Only process units I "own" (Distributed Authority)
+                // Player 1 calculates for Team 1. GM calculates for Enemy.
                 Object.values(units).forEach(u => {
                     if (u.team === userRole || (userRole === 'GM' && u.team === 'ENEMY')) {
                         let pos = u.getLatLng();
-                        
-                        // Movement
+                        let updated = false;
+
+                        // MOVEMENT LOGIC
                         if (u.state === 'move' && u.target) {
                             pos.lat += (u.target.lat - pos.lat) * 0.1;
                             pos.lng += (u.target.lng - pos.lng) * 0.1;
-                            if (map.distance(pos, u.target) < 10000) u.state = 'hold';
+                            if (map.distance(pos, u.target) < 10000) u.state = 'hold'; // Stop when close
+                            updated = true;
                         } else if (u.state === 'patrol') {
-                            pos.lat += (Math.random()-0.5) * 0.2;
-                            pos.lng += (Math.random()-0.5) * 0.2;
+                            pos.lat += (Math.random()-0.5) * 0.5;
+                            pos.lng += (Math.random()-0.5) * 0.5;
+                            updated = true;
                         } else if (u.team === 'ENEMY') {
+                            // AI LOGIC: Hunt nearest player
                             const targets = Object.values(units).filter(t => t.team !== 'ENEMY');
                             if (targets.length > 0) {
-                                let target = targets[0].getLatLng();
-                                pos.lat += (target.lat - pos.lat) * 0.02;
-                                pos.lng += (target.lng - pos.lng) * 0.02;
+                                // Find closest target
+                                let closest = targets[0];
+                                let minDist = Infinity;
+                                targets.forEach(t => {
+                                    const d = map.distance(pos, t.getLatLng());
+                                    if(d < minDist) { minDist = d; closest = t; }
+                                });
+                                // Move towards closest
+                                const tPos = closest.getLatLng();
+                                pos.lat += (tPos.lat - pos.lat) * 0.05;
+                                pos.lng += (tPos.lng - pos.lng) * 0.05;
+                                updated = true;
                             }
                         }
 
-                        // Combat
+                        // COMBAT LOGIC
                         const enemies = Object.values(units).filter(e => e.team !== u.team);
                         enemies.forEach(e => {
-                            if (map.distance(pos, e.getLatLng()) < 300000) { // 300km range
-                                e.hp -= (u.team === 'ENEMY' ? 5 : 2);
-                                channel.send({ type:'broadcast', event:'combat_fx', payload:{ from:pos, to:e.getLatLng() }});
+                            // Engagement Range: 300km
+                            if (map.distance(pos, e.getLatLng()) < 300000) {
+                                // Calculate Damage
+                                const dmg = (u.team === 'ENEMY') ? 5 : 2; // Enemy hits harder
+                                e.hp -= dmg;
+                                updated = true; // Force update to show HP loss
+
+                                // Send Visual Effect
+                                channel.send({ type: 'broadcast', event: 'combat_fx', payload: { from: pos, to: e.getLatLng() }});
                             }
                         });
 
+                        // BROADCAST UPDATE (Only if something changed or every 2 seconds for sync)
+                        // We send often to keep movement smooth
                         broadcastUnit(u.id, pos.lat, pos.lng, u.team, u.hp, u.target, u.state);
                     }
                 });
-            }, 1000);
+            }, 800); // Run loop every 0.8 seconds
         }
 
-        function drawTracer(from, to) {
-    // Only draw the line if the player can see the destination (the enemy)
-    // Map.getBounds().contains checks if the battle is on the user's screen
-    const line = L.polyline([from, to], { 
-        color: '#ff0000', 
-        weight: 2, 
-        opacity: 0.8,
-        dashArray: '5, 10' 
-    }).addTo(map);
-    
-    // Remove the tracer after 200 milliseconds to create a "flicker" effect
-    setTimeout(() => map.removeLayer(line), 200);
-}
+        function broadcastUnit(id, lat, lng, team, hp, target=null, state='hold') {
+            channel.send({ 
+                type: 'broadcast', 
+                event: 'unit_sync', 
+                payload: { id, lat, lng, team, hp, target, state }
+            });
+        }
 
         // --- UI HELPERS ---
-        window.request = (type) => channel.send({ type:'broadcast', event:'appeal', payload:{ team:userRole, type }});
-        window.setOrder = (s) => selectedIds.forEach(id => { if(units[id]) units[id].state = s; });
-        function addAppeal(a) {
+        function addAppealUI(a) {
+            const id = 'req_' + Math.random().toString(36).substr(2, 5);
             const d = document.createElement('div');
-            d.innerHTML = `T${a.team} req ${a.type} <button onclick="grant('${a.team}','${a.type}', this)">OK</button>`;
+            d.className = 'gm-request';
+            d.id = id;
+            d.innerHTML = `<span>T${a.team}: ${a.type.toUpperCase()}</span> 
+                           <button onclick="grant('${a.team}','${a.type}', '${id}')" style="width:auto; padding:2px 10px;">GRANT</button>`;
             document.getElementById('requests').appendChild(d);
         }
-        window.grant = (team, type, btn) => {
-            channel.send({ type:'broadcast', event:'gm_grant', payload:{ team, type }});
-            btn.parentElement.remove();
-        };
+
         function updateCasualtyUI() {
-            document.getElementById('death-list').innerText = `T1:${casualties[1]} | T2:${casualties[2]} | T3:${casualties[3]} | T4:${casualties[4]} | AI:${casualties['ENEMY']}`;
+            document.getElementById('death-list').innerText = 
+                `T1:${casualties[1]} | T2:${casualties[2]} | T3:${casualties[3]} | T4:${casualties[4]} | AI:${casualties['ENEMY']}`;
         }
     </script>
 </body>
