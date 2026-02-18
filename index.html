@@ -1,208 +1,84 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>4-Team RTS: Battle Edition</title>
-    <style>
-        body { margin: 0; overflow: hidden; background: #1a1a1a; font-family: 'Courier New', Courier, monospace; }
-        canvas { display: block; }
-        #ui { position: absolute; top: 10px; left: 10px; color: #0f0; pointer-events: none; text-shadow: 1px 1px 2px black; }
-        .stat { color: white; font-size: 0.9em; }
-    </style>
+<meta charset="utf-8">
+<title>4 Team RTS</title>
+<script src="https://cdn.jsdelivr.net/npm/phaser@3/dist/phaser.js"></script>
 </head>
 <body>
-    <div id="ui">
-        <h2 id="status">4-TEAM SKIRMISH</h2>
-        <div class="stat">Blue: Player | Red/Green/Gold: AI</div>
-        <div class="stat">L-Click: Select | R-Click: Attack/Move</div>
-    </div>
-    <canvas id="gameCanvas"></canvas>
 
 <script>
-const canvas = document.getElementById('gameCanvas');
-const ctx = canvas.getContext('2d');
-canvas.width = window.innerWidth;
-canvas.height = window.innerHeight;
+let socket = new WebSocket("ws://localhost:8080");
 
-const teams = ['blue', 'red', 'green', 'gold'];
+let teamColor = "white";
 let units = [];
-let selectionBox = null;
-const ATTACK_RANGE = 50;
-const SCAN_RANGE = 150;
+let boss;
 
-class Unit {
-    constructor(x, y, team) {
-        this.x = x; this.y = y;
-        this.team = team;
-        this.targetPos = null;
-        this.targetEnemy = null;
-        this.selected = false;
-        this.radius = 7;
-        this.speed = 1.2;
-        this.hp = 100;
-        this.maxHp = 100;
-        this.attackCooldown = 0;
+const config = {
+    type: Phaser.AUTO,
+    width: 1000,
+    height: 600,
+    scene: { create, update }
+};
+
+new Phaser.Game(config);
+
+socket.onmessage = (event) => {
+    const data = JSON.parse(event.data);
+
+    if (data.type === "init") {
+        teamColor = data.team;
     }
 
-    update() {
-        if (this.hp <= 0) return;
-
-        // 1. Find Enemy if idle
-        if (!this.targetEnemy || this.targetEnemy.hp <= 0) {
-            this.targetEnemy = this.findNearestEnemy();
-        }
-
-        // 2. Combat Logic
-        if (this.targetEnemy) {
-            const dist = this.getDist(this.targetEnemy);
-            if (dist < ATTACK_RANGE) {
-                this.attack();
-                return; // Stop moving to shoot
-            } else if (dist < SCAN_RANGE && !this.targetPos) {
-                // Chase if close but out of range
-                this.moveToward(this.targetEnemy.x, this.targetEnemy.y);
-            }
-        }
-
-        // 3. Movement Logic
-        if (this.targetPos) {
-            const dist = this.getDist(this.targetPos);
-            if (dist > 3) {
-                this.moveToward(this.targetPos.x, this.targetPos.y);
-            } else {
-                this.targetPos = null;
-            }
-        }
-        
-        if (this.attackCooldown > 0) this.attackCooldown--;
+    if (data.type === "update") {
+        updateGame(data.gameState);
     }
+};
 
-    findNearestEnemy() {
-        let closest = null;
-        let minDist = SCAN_RANGE;
-        units.forEach(u => {
-            if (u.team !== this.team && u.hp > 0) {
-                const d = this.getDist(u);
-                if (d < minDist) {
-                    minDist = d;
-                    closest = u;
-                }
-            }
-        });
-        return closest;
-    }
-
-    moveToward(tx, ty) {
-        const dx = tx - this.x;
-        const dy = ty - this.y;
-        const dist = Math.sqrt(dx*dx + dy*dy);
-        this.x += (dx/dist) * this.speed;
-        this.y += (dy/dist) * this.speed;
-    }
-
-    attack() {
-        if (this.attackCooldown <= 0) {
-            this.targetEnemy.hp -= 10;
-            this.attackCooldown = 30; // 0.5s at 60fps
-            // Draw bullet line
-            ctx.beginPath();
-            ctx.strokeStyle = 'yellow';
-            ctx.lineWidth = 1;
-            ctx.moveTo(this.x, this.y);
-            ctx.lineTo(this.targetEnemy.x, this.targetEnemy.y);
-            ctx.stroke();
-        }
-    }
-
-    getDist(obj) {
-        return Math.sqrt((obj.x-this.x)**2 + (obj.y-this.y)**2);
-    }
-
-    draw() {
-        if (this.hp <= 0) return;
-        
-        // Body
-        ctx.beginPath();
-        ctx.arc(this.x, this.y, this.radius, 0, Math.PI*2);
-        ctx.fillStyle = this.team;
-        ctx.fill();
-        
-        // Selection Ring
-        if (this.selected) {
-            ctx.strokeStyle = 'white';
-            ctx.stroke();
-        }
-
-        // HP Bar
-        ctx.fillStyle = 'red';
-        ctx.fillRect(this.x - 10, this.y - 15, 20, 3);
-        ctx.fillStyle = '#0f0';
-        ctx.fillRect(this.x - 10, this.y - 15, 20 * (this.hp/this.maxHp), 3);
-    }
-}
-
-function initGame() {
-    units = [];
-    teams.forEach((team, t) => {
-        const startX = (t % 2) * (canvas.width - 200) + 100;
-        const startY = Math.floor(t / 2) * (canvas.height - 200) + 100;
-        for(let i=0; i<8; i++) {
-            units.push(new Unit(startX + Math.random()*60, startY + Math.random()*60, team));
-        }
+function create() {
+    this.input.on('pointerdown', pointer => {
+        socket.send(JSON.stringify({
+            type: "move",
+            team: teamColor,
+            x: pointer.x,
+            y: pointer.y
+        }));
     });
 }
 
-// Mouse Controls
-let isDragging = false;
-let startX, startY;
+function updateGame(state) {
 
-canvas.onmousedown = (e) => {
-    if (e.button === 0) {
-        isDragging = true;
-        startX = e.clientX; startY = e.clientY;
+    units.forEach(u => u.destroy());
+    units = [];
+
+    state.units.forEach(u => {
+        let color = {
+            blue: 0x0000ff,
+            green: 0x00ff00,
+            yellow: 0xffff00,
+            purple: 0x800080
+        }[u.team];
+
+        units.push(
+            game.scene.scenes[0].add.circle(u.x, u.y, 10, color)
+        );
+    });
+
+    if (!boss) {
+        boss = game.scene.scenes[0].add.circle(
+            state.boss.x,
+            state.boss.y,
+            20,
+            0xff0000
+        );
     } else {
-        units.filter(u => u.selected).forEach(u => {
-            u.targetPos = { x: e.clientX, y: e.clientY };
-            u.targetEnemy = null;
-        });
+        boss.x = state.boss.x;
+        boss.y = state.boss.y;
     }
-};
-
-canvas.onmousemove = (e) => { if (isDragging) selectionBox = { x1: startX, y1: startY, x2: e.clientX, y2: e.clientY }; };
-
-canvas.onmouseup = () => {
-    if (isDragging && selectionBox) {
-        units.forEach(u => {
-            if (u.team === 'blue') {
-                u.selected = u.x > Math.min(selectionBox.x1, selectionBox.x2) &&
-                             u.x < Math.max(selectionBox.x1, selectionBox.x2) &&
-                             u.y > Math.min(selectionBox.y1, selectionBox.y2) &&
-                             u.y < Math.max(selectionBox.y1, selectionBox.y2);
-            }
-        });
-    }
-    isDragging = false;
-    selectionBox = null;
-};
-
-window.oncontextmenu = (e) => e.preventDefault();
-
-function loop() {
-    ctx.fillStyle = '#1a2b1a'; // Dark Forest
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-    units = units.filter(u => u.hp > 0); // Cleanup dead
-    units.forEach(u => { u.update(); u.draw(); });
-
-    if (selectionBox) {
-        ctx.strokeStyle = 'rgba(0, 255, 0, 0.5)';
-        ctx.strokeRect(selectionBox.x1, selectionBox.y1, selectionBox.x2 - selectionBox.x1, selectionBox.y2 - selectionBox.y1);
-    }
-
-    requestAnimationFrame(loop);
 }
 
-initGame();
-loop();
+function update(){}
 </script>
+
 </body>
 </html>
