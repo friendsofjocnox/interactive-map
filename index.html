@@ -54,18 +54,30 @@
         const units = {}; // Store all units on map
 
         // --- 3. MULTIPLAYER CONNECTION ---
-        const channel = supabase.channel('global-war', {
-            config: { broadcast: { self: true } }
-        });
+        // Optimized Connection Logic
+const channel = supabase.channel('global-war', {
+    config: {
+        broadcast: { self: true },
+        presence: { key: myId }
+    }
+});
 
-        channel
-            .on('broadcast', { event: 'unit_update' }, ({ payload }) => {
-                renderUnit(payload);
-            })
-            .subscribe((status) => {
-                if (status === 'SUBSCRIBED') document.getElementById('status').innerText = "Online";
-            });
-
+channel
+    .on('broadcast', { event: 'unit_update' }, ({ payload }) => {
+        renderUnit(payload);
+    })
+    .subscribe((status, err) => {
+        if (status === 'SUBSCRIBED') {
+            document.getElementById('status').innerText = "Online";
+            document.getElementById('status').style.color = "#0f0";
+        }
+        if (err) {
+            console.error("Connection Error:", err);
+            document.getElementById('status').innerText = "Error (Check Console)";
+            document.getElementById('status').style.color = "red";
+        }
+    });
+        
         // --- 4. CORE FUNCTIONS ---
         function renderUnit(data) {
             const { id, lat, lng, color, hp } = data;
