@@ -1,208 +1,101 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>4-Team RTS: Battle Edition</title>
+    <title>Global RTS Multiplayer</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <style>
-        body { margin: 0; overflow: hidden; background: #1a1a1a; font-family: 'Courier New', Courier, monospace; }
-        canvas { display: block; }
-        #ui { position: absolute; top: 10px; left: 10px; color: #0f0; pointer-events: none; text-shadow: 1px 1px 2px black; }
-        .stat { color: white; font-size: 0.9em; }
+        body, html, #map { margin: 0; height: 100%; background: #001529; }
+        #ui { position: absolute; top: 10px; left: 50px; z-index: 1000; background: rgba(0,0,0,0.8); color: #0f0; padding: 10px; border: 1px solid #0f0; font-family: monospace; pointer-events: none; }
     </style>
 </head>
 <body>
     <div id="ui">
-        <h2 id="status">4-TEAM SKIRMISH</h2>
-        <div class="stat">Blue: Player | Red/Green/Gold: AI</div>
-        <div class="stat">L-Click: Select | R-Click: Attack/Move</div>
+        <b>WORLD CONQUEST: MULTIPLAYER</b><br>
+        Status: <span id="conn-status">Connecting...</span><br>
+        Units: Right-Click map to deploy/move.
     </div>
-    <canvas id="gameCanvas"></canvas>
+    <div id="map"></div>
 
-<script>
-const canvas = document.getElementById('gameCanvas');
-const ctx = canvas.getContext('2d');
-canvas.width = window.innerWidth;
-canvas.height = window.innerHeight;
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 
-const teams = ['blue', 'red', 'green', 'gold'];
-let units = [];
-let selectionBox = null;
-const ATTACK_RANGE = 50;
-const SCAN_RANGE = 150;
+    <script>
+        // --- CONFIGURATION ---
+        const SUPABASE_URL = 'YOUR_SUPABASE_URL';
+        const SUPABASE_KEY = 'YOUR_SUPABASE_ANON_KEY';
+        const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
-class Unit {
-    constructor(x, y, team) {
-        this.x = x; this.y = y;
-        this.team = team;
-        this.targetPos = null;
-        this.targetEnemy = null;
-        this.selected = false;
-        this.radius = 7;
-        this.speed = 1.2;
-        this.hp = 100;
-        this.maxHp = 100;
-        this.attackCooldown = 0;
-    }
+        // --- MAP SETUP ---
+        const map = L.map('map', { attributionControl: false }).setView([20, 0], 3);
+        L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png').addTo(map);
 
-    update() {
-        if (this.hp <= 0) return;
+        // --- GAME STATE ---
+        const myClientId = Math.random().toString(36).substring(7);
+        const myTeam = ['blue', 'red', 'green', 'gold'][Math.floor(Math.random() * 4)];
+        const units = {}; // Global store: { unitId: LeafletMarker }
 
-        // 1. Find Enemy if idle
-        if (!this.targetEnemy || this.targetEnemy.hp <= 0) {
-            this.targetEnemy = this.findNearestEnemy();
-        }
+        const channel = supabase.channel('world-war-1', {
+            config: { broadcast: { self: true } }
+        });
 
-        // 2. Combat Logic
-        if (this.targetEnemy) {
-            const dist = this.getDist(this.targetEnemy);
-            if (dist < ATTACK_RANGE) {
-                this.attack();
-                return; // Stop moving to shoot
-            } else if (dist < SCAN_RANGE && !this.targetPos) {
-                // Chase if close but out of range
-                this.moveToward(this.targetEnemy.x, this.targetEnemy.y);
-            }
-        }
+        // --- MULTIPLAYER LOGIC ---
+        channel
+            .on('broadcast', { event: 'move' }, ({ payload }) => {
+                updateUnitPosition(payload);
+            })
+            .subscribe((status) => {
+                if (status === 'SUBSCRIBED') document.getElementById('conn-status').innerText = `Online (${myTeam})`;
+            });
 
-        // 3. Movement Logic
-        if (this.targetPos) {
-            const dist = this.getDist(this.targetPos);
-            if (dist > 3) {
-                this.moveToward(this.targetPos.x, this.targetPos.y);
+        function updateUnitPosition(data) {
+            const { id, lat, lng, team } = data;
+            if (!units[id]) {
+                // Create new unit marker
+                units[id] = L.circleMarker([lat, lng], {
+                    radius: 8,
+                    fillColor: team,
+                    color: '#fff',
+                    fillOpacity: 0.8
+                }).addTo(map);
+                units[id].bindTooltip(`Team: ${team}`).openTooltip();
             } else {
-                this.targetPos = null;
+                // Move existing unit smoothly (Simplified for this demo)
+                units[id].setLatLng([lat, lng]);
             }
         }
-        
-        if (this.attackCooldown > 0) this.attackCooldown--;
-    }
 
-    findNearestEnemy() {
-        let closest = null;
-        let minDist = SCAN_RANGE;
-        units.forEach(u => {
-            if (u.team !== this.team && u.hp > 0) {
-                const d = this.getDist(u);
-                if (d < minDist) {
-                    minDist = d;
-                    closest = u;
-                }
-            }
+        // --- INPUTS ---
+        map.on('contextmenu', (e) => {
+            const unitId = `${myClientId}_${Date.now()}`;
+            const moveData = {
+                id: unitId,
+                lat: e.latlng.lat,
+                lng: e.latlng.lng,
+                team: myTeam
+            };
+
+            // Broadcast move to all players
+            channel.send({
+                type: 'broadcast',
+                event: 'move',
+                payload: moveData
+            });
         });
-        return closest;
-    }
 
-    moveToward(tx, ty) {
-        const dx = tx - this.x;
-        const dy = ty - this.y;
-        const dist = Math.sqrt(dx*dx + dy*dy);
-        this.x += (dx/dist) * this.speed;
-        this.y += (dy/dist) * this.speed;
-    }
+        // --- ENEMY AI (Simulated by Host) ---
+        // In a real game, the first player in 'presence' would run this.
+        setInterval(() => {
+            const enemyId = 'ai_bot_1';
+            const randomLat = 20 + (Math.random() - 0.5) * 10;
+            const randomLng = (Math.random() - 0.5) * 10;
+            
+            channel.send({
+                type: 'broadcast',
+                event: 'move',
+                payload: { id: enemyId, lat: randomLat, lng: randomLng, team: 'white' }
+            });
+        }, 3000);
 
-    attack() {
-        if (this.attackCooldown <= 0) {
-            this.targetEnemy.hp -= 10;
-            this.attackCooldown = 30; // 0.5s at 60fps
-            // Draw bullet line
-            ctx.beginPath();
-            ctx.strokeStyle = 'yellow';
-            ctx.lineWidth = 1;
-            ctx.moveTo(this.x, this.y);
-            ctx.lineTo(this.targetEnemy.x, this.targetEnemy.y);
-            ctx.stroke();
-        }
-    }
-
-    getDist(obj) {
-        return Math.sqrt((obj.x-this.x)**2 + (obj.y-this.y)**2);
-    }
-
-    draw() {
-        if (this.hp <= 0) return;
-        
-        // Body
-        ctx.beginPath();
-        ctx.arc(this.x, this.y, this.radius, 0, Math.PI*2);
-        ctx.fillStyle = this.team;
-        ctx.fill();
-        
-        // Selection Ring
-        if (this.selected) {
-            ctx.strokeStyle = 'white';
-            ctx.stroke();
-        }
-
-        // HP Bar
-        ctx.fillStyle = 'red';
-        ctx.fillRect(this.x - 10, this.y - 15, 20, 3);
-        ctx.fillStyle = '#0f0';
-        ctx.fillRect(this.x - 10, this.y - 15, 20 * (this.hp/this.maxHp), 3);
-    }
-}
-
-function initGame() {
-    units = [];
-    teams.forEach((team, t) => {
-        const startX = (t % 2) * (canvas.width - 200) + 100;
-        const startY = Math.floor(t / 2) * (canvas.height - 200) + 100;
-        for(let i=0; i<8; i++) {
-            units.push(new Unit(startX + Math.random()*60, startY + Math.random()*60, team));
-        }
-    });
-}
-
-// Mouse Controls
-let isDragging = false;
-let startX, startY;
-
-canvas.onmousedown = (e) => {
-    if (e.button === 0) {
-        isDragging = true;
-        startX = e.clientX; startY = e.clientY;
-    } else {
-        units.filter(u => u.selected).forEach(u => {
-            u.targetPos = { x: e.clientX, y: e.clientY };
-            u.targetEnemy = null;
-        });
-    }
-};
-
-canvas.onmousemove = (e) => { if (isDragging) selectionBox = { x1: startX, y1: startY, x2: e.clientX, y2: e.clientY }; };
-
-canvas.onmouseup = () => {
-    if (isDragging && selectionBox) {
-        units.forEach(u => {
-            if (u.team === 'blue') {
-                u.selected = u.x > Math.min(selectionBox.x1, selectionBox.x2) &&
-                             u.x < Math.max(selectionBox.x1, selectionBox.x2) &&
-                             u.y > Math.min(selectionBox.y1, selectionBox.y2) &&
-                             u.y < Math.max(selectionBox.y1, selectionBox.y2);
-            }
-        });
-    }
-    isDragging = false;
-    selectionBox = null;
-};
-
-window.oncontextmenu = (e) => e.preventDefault();
-
-function loop() {
-    ctx.fillStyle = '#1a2b1a'; // Dark Forest
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-    units = units.filter(u => u.hp > 0); // Cleanup dead
-    units.forEach(u => { u.update(); u.draw(); });
-
-    if (selectionBox) {
-        ctx.strokeStyle = 'rgba(0, 255, 0, 0.5)';
-        ctx.strokeRect(selectionBox.x1, selectionBox.y1, selectionBox.x2 - selectionBox.x1, selectionBox.y2 - selectionBox.y1);
-    }
-
-    requestAnimationFrame(loop);
-}
-
-initGame();
-loop();
-</script>
+    </script>
 </body>
 </html>
