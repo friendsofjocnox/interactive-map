@@ -12,6 +12,8 @@
             padding: 15px; border: 1px solid #005500; border-radius: 4px; box-shadow: 0 0 15px rgba(0, 255, 0, 0.1); user-select: none;
         }
         #auth-overlay { position: fixed; inset: 0; background: #000; z-index: 9999; display: flex; flex-direction: column; align-items: center; justify-content: center; color: #0f0; }
+        
+        /* Fixed Panel Widths */
         #player-ui { top: 10px; left: 10px; width: 280px; }
         #gm-ui { top: 10px; right: 10px; display: none; width: 320px; max-height: 90vh; overflow-y: auto; }
         
@@ -26,6 +28,9 @@
             background: rgba(255, 0, 0, 0.8); color: white; padding: 20px 40px; font-size: 24px; font-weight: bold;
             border: 2px solid white; text-transform: uppercase; display: none; text-shadow: 2px 2px 4px #000;
         }
+
+        /* Threat Timer Styling */
+        .threat-list { color: red; font-weight: bold; font-size: 14px; margin-top: 5px; background: rgba(50,0,0,0.5); padding: 5px; border: 1px solid red;}
 
         /* Markers */
         .base-marker { border-radius: 50%; border: 2px solid #fff; box-shadow: 0 0 10px currentColor; }
@@ -53,8 +58,10 @@
         <b>PLAYER COMMAND</b><hr>
         <span style="color:cyan;">Base Management:</span><br>
         <small style="color:#aaa;">Click your Base, then Right-Click map to request a relocation.</small><br>
-        <hr>
         Selected Base: <span id="selected-base-id" style="color:yellow;">None</span>
+        <hr>
+        <b style="color:red;">WARNING SYSTEM:</b>
+        <div id="threat-list" class="threat-list">NO ACTIVE THREATS</div>
     </div>
 
     <div id="gm-ui" class="ui-panel">
@@ -63,6 +70,10 @@
         <b>TOOLS:</b>
         <button onclick="setGMAction('base')" id="btn-base">1. PLACE PLAYER BASE (CLICK MAP)</button>
         <button onclick="setGMAction('missile')" id="btn-missile">2. LAUNCH MISSILE (CLICK MAP)</button>
+        <hr>
+
+        <b style="color:red;">MISSILE STATUS:</b>
+        <div id="gm-threat-list" class="threat-list">NO ACTIVE THREATS</div>
         <hr>
         
         <b>GLOBAL BROADCAST:</b>
@@ -78,16 +89,44 @@
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script type="module">
+        // 1. Define window functions FIRST so the UI never breaks.
+        window.login = () => {
+            if (document.getElementById('access-code').value === '1234') { 
+                window.userRole = document.getElementById('role-select').value;
+                document.getElementById('auth-overlay').style.display = 'none';
+                if(window.userRole === 'GM') document.getElementById('gm-ui').style.display = 'block';
+                else document.getElementById('player-ui').style.display = 'block';
+                startLocalSimulation(); 
+            } else { alert("INVALID CODE. Use 1234."); }
+        };
+
+        window.setGMAction = (action) => {
+            window.gmAction = window.gmAction === action ? null : action;
+            document.getElementById('btn-base').classList.toggle('active-btn', window.gmAction === 'base');
+            document.getElementById('btn-missile').classList.toggle('active-btn', window.gmAction === 'missile');
+        };
+
+        window.sendAnnouncement = () => {
+            const msg = document.getElementById('announce-input').value;
+            if(!msg) return;
+            window.channel.send({ type: 'broadcast', event: 'announcement', payload: msg });
+            document.getElementById('announce-input').value = '';
+        };
+
+        window.approveMove = (reqId, approved) => {
+            window.channel.send({ type: 'broadcast', event: 'resolve_move', payload: { reqId, approved }});
+        };
+
+        // 2. Setup Supabase
         import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm'
 
         // --- 1. SETTINGS ---
 const SUPABASE_URL = 'https://hfripibhhypbvnoimzdr.supabase.co';
 const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImhmcmlwaWJoaHlwYnZub2ltemRyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzEzOTQ1NjYsImV4cCI6MjA4Njk3MDU2Nn0.h_uP2EVvjJMoPlcUFGOiaKOj6JFdspnYvC2OqR5a10g';
-
+        
         const gameServer = createClient(SUPABASE_URL, SUPABASE_KEY);
 
-        // --- MAP SETUP (FIXED BOUNDS) ---
-        // Prevents panning infinitely sideways or up/down
+        // 3. Map Setup (Fixed Bounds)
         const worldBounds = [[-90, -180], [90, 180]];
         const map = L.map('map', { 
             zoomControl: false, doubleClickZoom: false, attributionControl: false,
@@ -98,47 +137,22 @@ const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZ
             noWrap: true, bounds: worldBounds
         }).addTo(map);
 
-        // --- STATE VARIABLES ---
-        let userRole = null;
-        let gmAction = null;
+        // 4. State Variables
+        window.userRole = null;
+        window.gmAction = null;
         let selectedBase = null;
         
         const bases = {}; 
         const missiles = {};
         const requests = {};
-        const gmTargetLines = {}; // Lines visible only to GM
+        const gmTargetLines = {}; 
 
         const MISSILE_FLIGHT_TIME_MS = 25 * 60 * 1000; // 25 Minutes
 
-        const channel = gameServer.channel('defcon', { config: { broadcast: { self: true } } });
+        window.channel = gameServer.channel('defcon', { config: { broadcast: { self: true } } });
 
-        // --- AUTH ---
-        window.login = () => {
-            if (document.getElementById('access-code').value === '1234') { 
-                userRole = document.getElementById('role-select').value;
-                document.getElementById('auth-overlay').style.display = 'none';
-                if(userRole === 'GM') document.getElementById('gm-ui').style.display = 'block';
-                else document.getElementById('player-ui').style.display = 'block';
-                startLocalSimulation(); // Start rendering engine
-            } else { alert("INVALID CODE"); }
-        };
-
-        // --- GM CONTROLS ---
-        window.setGMAction = (action) => {
-            gmAction = gmAction === action ? null : action;
-            document.getElementById('btn-base').classList.toggle('active-btn', gmAction === 'base');
-            document.getElementById('btn-missile').classList.toggle('active-btn', gmAction === 'missile');
-        };
-
-        window.sendAnnouncement = () => {
-            const msg = document.getElementById('announce-input').value;
-            if(!msg) return;
-            channel.send({ type: 'broadcast', event: 'announcement', payload: msg });
-            document.getElementById('announce-input').value = '';
-        };
-
-        // --- NETWORK RECEIVERS ---
-        channel
+        // 5. Network Receivers
+        window.channel
             .on('broadcast', { event: 'sync_base' }, ({ payload }) => renderBase(payload))
             .on('broadcast', { event: 'launch_missile' }, ({ payload }) => registerMissile(payload))
             .on('broadcast', { event: 'announcement' }, ({ payload }) => showAnnouncement(payload))
@@ -147,59 +161,54 @@ const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZ
             .on('broadcast', { event: 'base_destroyed' }, ({ payload }) => destroyBase(payload.id))
             .subscribe();
 
-        // --- MAP INTERACTIONS ---
+        // 6. Map Interactions
         map.on('click', (e) => {
-            // GM Logic
-            if (userRole === 'GM') {
-                if (gmAction === 'base') {
+            if (window.userRole === 'GM') {
+                if (window.gmAction === 'base') {
                     const id = 'b_' + Math.random().toString(36).substr(2, 5);
-                    channel.send({ type: 'broadcast', event: 'sync_base', payload: { id, lat: e.latlng.lat, lng: e.latlng.lng }});
-                    setGMAction(null);
-                } else if (gmAction === 'missile') {
+                    window.channel.send({ type: 'broadcast', event: 'sync_base', payload: { id, lat: e.latlng.lat, lng: e.latlng.lng }});
+                    window.setGMAction(null);
+                } else if (window.gmAction === 'missile') {
                     const baseKeys = Object.keys(bases);
-                    if (baseKeys.length === 0) return alert("No bases to target!");
+                    if (baseKeys.length === 0) return alert("No active bases to target!");
                     
-                    // Pick Random Base
                     const targetId = baseKeys[Math.floor(Math.random() * baseKeys.length)];
                     const targetPos = bases[targetId].getLatLng();
-                    
                     const mId = 'm_' + Math.random().toString(36).substr(2, 5);
-                    channel.send({ type: 'broadcast', event: 'launch_missile', payload: { 
+                    
+                    window.channel.send({ type: 'broadcast', event: 'launch_missile', payload: { 
                         id: mId, startLat: e.latlng.lat, startLng: e.latlng.lng, 
                         targetLat: targetPos.lat, targetLng: targetPos.lng, targetId: targetId,
                         startTime: Date.now()
                     }});
-                    setGMAction(null);
+                    window.setGMAction(null);
                 }
             } else {
-                // Player clicked map (deselect base)
                 selectedBase = null;
                 document.getElementById('selected-base-id').innerText = "None";
                 Object.values(bases).forEach(b => b.setStyle({ color: '#fff' }));
             }
         });
 
-        // Player Request Move
         map.on('contextmenu', (e) => {
             e.originalEvent.preventDefault();
-            if (userRole === 'PLAYER' && selectedBase) {
+            if (window.userRole === 'PLAYER' && selectedBase) {
                 const reqId = 'req_' + Math.random().toString(36).substr(2, 5);
-                channel.send({ type: 'broadcast', event: 'move_request', payload: { reqId, baseId: selectedBase, lat: e.latlng.lat, lng: e.latlng.lng }});
+                window.channel.send({ type: 'broadcast', event: 'move_request', payload: { reqId, baseId: selectedBase, lat: e.latlng.lat, lng: e.latlng.lng }});
                 alert("Move request transmitted to Game Master.");
             }
         });
 
-        // --- ENTITY LOGIC ---
+        // 7. Core Logic Functions
         function renderBase(data) {
             if (!bases[data.id]) {
                 bases[data.id] = L.circleMarker([data.lat, data.lng], { 
                     radius: 12, fillColor: '#0077ff', color: '#fff', weight: 2, fillOpacity: 0.8 
                 }).addTo(map);
                 
-                // Player Selection
                 bases[data.id].on('click', (e) => {
                     L.DomEvent.stopPropagation(e);
-                    if (userRole === 'PLAYER') {
+                    if (window.userRole === 'PLAYER') {
                         Object.values(bases).forEach(b => b.setStyle({ color: '#fff' }));
                         selectedBase = data.id;
                         document.getElementById('selected-base-id').innerText = "Base Selected";
@@ -213,53 +222,41 @@ const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZ
 
         function registerMissile(data) {
             missiles[data.id] = data;
-            
-            // GM sees the target line
-            if (userRole === 'GM') {
+            if (window.userRole === 'GM') {
                 gmTargetLines[data.id] = L.polyline(
                     [[data.startLat, data.startLng], [data.targetLat, data.targetLng]], 
                     { color: 'red', weight: 1, dashArray: '5, 5', opacity: 0.5 }
                 ).addTo(map);
             }
-
-            // Create Icon
             missiles[data.id].marker = L.marker([data.startLat, data.startLng], { 
                 icon: L.divIcon({ className: 'missile-marker', html: '🚀' }) 
             }).addTo(map);
         }
 
         function handleMoveRequest(data) {
-            if (userRole === 'GM') {
-                // Show phantom marker
+            if (window.userRole === 'GM') {
                 requests[data.reqId] = {
                     data: data,
                     marker: L.circleMarker([data.lat, data.lng], { radius: 12, color: 'cyan', className: 'phantom-marker' }).addTo(map)
                 };
-
-                // Add to UI
                 const d = document.createElement('div'); d.id = data.reqId;
-                d.innerHTML = `<small>Base Relocation Req</small><br>
+                d.innerHTML = `<small>Relocation Req</small><br>
                     <button onclick="approveMove('${data.reqId}', true)" style="width:48%; background:#050;">APPROVE</button>
                     <button onclick="approveMove('${data.reqId}', false)" style="width:48%; background:#500;">DENY</button>`;
                 document.getElementById('move-requests').appendChild(d);
             }
         }
 
-        window.approveMove = (reqId, approved) => {
-            channel.send({ type: 'broadcast', event: 'resolve_move', payload: { reqId, approved }});
-        };
-
         function resolveMove(data) {
-            if (userRole === 'GM' && requests[data.reqId]) {
+            if (window.userRole === 'GM' && requests[data.reqId]) {
                 map.removeLayer(requests[data.reqId].marker);
                 document.getElementById(data.reqId).remove();
-                
                 if (data.approved) {
                     const req = requests[data.reqId].data;
-                    channel.send({ type: 'broadcast', event: 'sync_base', payload: { id: req.baseId, lat: req.lat, lng: req.lng }});
+                    window.channel.send({ type: 'broadcast', event: 'sync_base', payload: { id: req.baseId, lat: req.lat, lng: req.lng }});
                 }
                 delete requests[data.reqId];
-            } else if (userRole === 'PLAYER') {
+            } else if (window.userRole === 'PLAYER') {
                 if (data.approved) alert("HQ: Relocation Approved.");
                 else alert("HQ: Relocation Denied. Hold position.");
             }
@@ -270,5 +267,13 @@ const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZ
                 const pos = bases[id].getLatLng();
                 map.removeLayer(bases[id]);
                 delete bases[id];
-                // Explosion visual
-                const boom = L.circleMarker(pos, { radius: 40, fillColor: 'red', color: 'orange', fillOpacity: 0.8 }).addTo(
+                const boom = L.circleMarker(pos, { radius: 40, fillColor: 'red', color: 'orange', fillOpacity: 0.8 }).addTo(map);
+                setTimeout(() => map.removeLayer(boom), 2000);
+            }
+        }
+
+        function showAnnouncement(msg) {
+            const banner = document.getElementById('announcement-banner');
+            banner.innerText = msg;
+            banner.style.display = 'block';
+            setTimeout(() => { banner.
