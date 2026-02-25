@@ -36,7 +36,7 @@
 
     <div id="auth-overlay">
         <div style="border: 2px solid #0f0; padding: 50px; text-align: center; background: #000800;">
-            <h1 style="letter-spacing: 5px;">STRATEGIC COMMAND</h1>
+            <h1 style="letter-spacing: 5px;">STRAT3GIC COMMAND</h1>
             <small style="color: #0aa;">Enter your assigned clearance code to proceed.</small><br><br>
             <input type="password" id="access-code" placeholder="ENCRYPTION KEY"><br>
             <button onclick="attemptLogin()">INITIALIZE LINK</button>
@@ -93,8 +93,8 @@
         const requests = {};
         const gmLines = {};
         
-        const MISSILE_FLIGHT_TIME = 60*100; // 25 Minutes
-        const BASE_MOVE_TIME = 30*100; // 5 Minutes
+        const MISSILE_FLIGHT_TIME = 2*60*1000; // 25 Minutes
+        const BASE_MOVE_TIME = 1*60*1000; // 5 Minutes
 
         // --- MAP SETUP ---
         const bounds = [[-85, -180], [85, 180]];
