@@ -139,7 +139,7 @@
                                                                                                                                                                                       
         </pre>
 
-        <h1 style="letter-spacing: 5px;">STR COMMAND</h1>
+        <h1 style="letter-spacing: 5px;">STAR COMMAND</h1>
         <small style="color: #0aa;">Enter your assigned clearance code to proceed.</small><br><br>
         <input type="password" id="access-code" placeholder="ENCRYPTION KEY"><br>
         <button onclick="attemptLogin()">INITIALIZE LINK</button>
@@ -161,8 +161,7 @@
         <b>COMMAND CONSOLE (GM)</b><hr>
         <button onclick="setGMTool('mob')" id="btn-mob">PLACE M.O.B. (Main)</button>
         <button onclick="setGMTool('fos')" id="btn-fos">PLACE F.O.S. (Forward)</button>
-        <button onclick="setGMTool('missile')" id="btn-missile" style="border-color: red; color: #ff5555;">LAUNCH MISSILE</button>
-        <hr>
+<button onclick="setGMTool('missile')" id="btn-missile" style="border-color: red; color: #ff5555;">PLACE MISSILE (Hidden)</button>        <hr>
         <b>MISSILE TRACKING:</b>
         <div class="threat-list" id="gm-threats">NO ACTIVE THREATS</div>
         <hr>
@@ -192,6 +191,7 @@
         window.userRole = null;
         window.gmTool = null;
         let selectedBaseId = null;
+        let selectedGmMissileId = null;
         const bases = {};
         const missiles = {};
         const requests = {};
@@ -280,17 +280,19 @@ fetch(MAP_URL)
                 if (window.gmTool === 'mob' || window.gmTool === 'fos') {
                     send('base', { id: 'b'+Math.random(), lat: e.latlng.lat, lng: e.latlng.lng, type: window.gmTool });
                     window.setGMTool(null);
-                } else if (window.gmTool === 'missile') {
-                    const keys = Object.keys(bases);
-                    if (!keys.length) return alert("No targets available.");
-                    const tid = keys[Math.floor(Math.random() * keys.length)];
-                    const tpos = bases[tid].marker.getLatLng(); // Locks onto coordinates
-                    send('missile', { 
-                        id: 'm'+Math.random(), start: e.latlng, target: tpos, tid: tid, time: Date.now() 
-                    });
-                    window.setGMTool(null);
-                }
+                }  else if (window.gmTool === 'missile') {
+    // 1. PLACEMENT PHASE: Drop a hidden missile on the map
+    send('missile', { 
+        id: 'm'+Math.random(), 
+        lat: e.latlng.lat, 
+        lng: e.latlng.lng, 
+        status: 'idle', 
+        visible: false 
+    });
+    window.setGMTool(null); 
             } else {
+                // Clicking empty space clears GM missile selection
+                selectedGmMissileId = null; 
                 selectedBaseId = null;
                 document.getElementById('sel-id').innerText = "None";
                 Object.values(bases).forEach(b => b.marker.setStyle({ color: '#fff' }));
@@ -321,26 +323,88 @@ fetch(MAP_URL)
                 }).addTo(map);
                 
                 bases[d.id].marker.on('click', (e) => {
-                    L.DomEvent.stopPropagation(e);
-                    if (window.userRole === 'PLAYER') {
-                        selectedBaseId = d.id;
-                        document.getElementById('sel-id').innerText = isMob ? "M.O.B Selected" : "F.O.S Selected";
-                        Object.values(bases).forEach(b => b.marker.setStyle({ color: '#fff' }));
-                        bases[d.id].marker.setStyle({ color: 'yellow' });
-                    }
-                });
+    L.DomEvent.stopPropagation(e);
+    
+    // PLAYER LOGIC (Selecting bases to move)
+    if (window.userRole === 'PLAYER') {
+        selectedBaseId = d.id;
+        document.getElementById('sel-id').innerText = isMob ? "M.O.B Selected" : "F.O.S Selected";
+        Object.values(bases).forEach(b => b.marker.setStyle({ color: '#fff' }));
+        bases[d.id].marker.setStyle({ color: 'yellow' });
+    }
+    
+    // GM LOGIC (Targeting bases with a selected missile)
+    if (window.userRole === 'GM' && selectedGmMissileId) {
+        const mId = selectedGmMissileId;
+        const targetPos = bases[d.id].marker.getLatLng();
+        
+        // 3. FLIGHT PHASE: Force visibility to true and set target
+        send('missile', { 
+            ...missiles[mId], 
+            status: 'flight', 
+            visible: true, 
+            target: targetPos, 
+            startTime: Date.now() 
+        });
+        
+        selectedGmMissileId = null; // Clear selection after launch
+        alert("LAUNCH DETECTED.");
+    }
+});
             }
         }
 
         function syncMissile(d) {
-            missiles[d.id] = d;
-            missiles[d.id].marker = L.marker([d.start.lat, d.start.lng], { 
-                icon: L.divIcon({ className: 'missile-marker', html: '🚀' }) 
-            }).addTo(map);
-            if (window.userRole === 'GM') {
-                gmLines[d.id] = L.polyline([d.start, d.target], { color: 'red', weight: 1, dashArray: '5' }).addTo(map);
-            }
+    // FOG OF WAR: If player, and missile is idle & hidden, do not show it.
+    if (window.userRole === 'PLAYER' && d.status === 'idle' && !d.visible) {
+        if (missiles[d.id]) {
+            map.removeLayer(missiles[d.id].marker);
+            delete missiles[d.id];
         }
+        return; 
+    }
+
+    if (!missiles[d.id]) {
+        // Create the missile
+        missiles[d.id] = d;
+        missiles[d.id].marker = L.marker([d.lat, d.lng], { 
+            icon: missileIcon 
+        }).addTo(map);
+
+        // GM CONTROLS
+        if (window.userRole === 'GM') {
+            // Left click: Select for launch
+            missiles[d.id].marker.on('click', (e) => {
+                L.DomEvent.stopPropagation(e);
+                if (d.status === 'idle') {
+                    selectedGmMissileId = d.id;
+                    alert("Missile Selected. Click a target base to LAUNCH.");
+                }
+            });
+
+            // Right click: Toggle Visibility
+            missiles[d.id].marker.on('contextmenu', (e) => {
+                e.originalEvent.preventDefault();
+                if (d.status === 'idle') {
+                    const isVisible = !missiles[d.id].visible;
+                    send('missile', { ...missiles[d.id], visible: isVisible });
+                    alert(isVisible ? "Missile REVEALED to Player." : "Missile HIDDEN from Player.");
+                }
+            });
+        }
+    } else {
+        // Update existing missile state
+        missiles[d.id].status = d.status;
+        missiles[d.id].visible = d.visible;
+        missiles[d.id].target = d.target;
+        missiles[d.id].startTime = d.startTime;
+
+        // Visual feedback for GM: dim hidden missiles
+        if (window.userRole === 'GM' && d.status === 'idle') {
+            missiles[d.id].marker.setOpacity(d.visible ? 1.0 : 0.4);
+        }
+    }
+}
 
         function handleReq(d) {
             if (window.userRole !== 'GM') return;
