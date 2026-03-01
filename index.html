@@ -337,22 +337,24 @@ fetch(MAP_URL)
                 
                     // GM TARGETING LOGIC
                     if (window.userRole === 'GM' && selectedGmMissileId) {
-                        const mId = selectedGmMissileId;
-                        const targetLatLng = e.latlng; // The coordinates of the base clicked
                 
-                        console.log("LAUNCHING MISSILE", mId, "AT BASE", d.id);
+                    const mId = selectedGmMissileId;
+                    const missile = missiles[mId];
+                    const startPos = missile.marker.getLatLng();
                 
-                        send('missile', {
-                            ...missiles[mId],
-                            status: 'flight',
-                            visible: true,      // Force visible so player sees the threat
-                            target: targetLatLng,
-                            startTime: Date.now()
-                        });
+                    send('missile', {
+                        id: mId,
+                        lat: startPos.lat,
+                        lng: startPos.lng,
+                        start: startPos,
+                        target: e.latlng,
+                        status: 'flight',
+                        visible: true,
+                        time: Date.now()
+                    });
                 
-                        selectedGmMissileId = null; // Reset selection
-                        document.getElementById('gm-threats').innerText = "MISSILE IN FLIGHT";
-                    } 
+                    selectedGmMissileId = null;
+                }
                     // PLAYER SELECTION LOGIC
                     else if (window.userRole === 'PLAYER') {
                         selectedBaseId = d.id;
@@ -366,51 +368,60 @@ fetch(MAP_URL)
         }
 
 function syncMissile(d) {
-    // PLAYER FOG OF WAR: If hidden and idle, remove from map and stop.
+
+    // PLAYER FOG OF WAR
     if (window.userRole === 'PLAYER' && d.status === 'idle' && !d.visible) {
-        if (missiles[d.id] && missiles[d.id].marker) {
+        if (missiles[d.id]?.marker) {
             map.removeLayer(missiles[d.id].marker);
-            delete missiles[d.id];
         }
-        return; 
+        delete missiles[d.id];
+        return;
     }
 
-    // 1. CREATE OR RE-CREATE MISSILE
+    // CREATE IF NOT EXISTS
     if (!missiles[d.id]) {
-        missiles[d.id] = { ...d };
-        const startOpacity = (window.userRole === 'GM' && !d.visible) ? 0.4 : 1.0;
-
-        missiles[d.id].marker = L.marker([d.lat, d.lng], { 
-            icon: missileIcon,
-            opacity: startOpacity 
+        missiles[d.id] = {};
+        missiles[d.id].marker = L.marker([d.lat, d.lng], {
+            icon: missileIcon
         }).addTo(map);
 
-        // GM Event Listeners
+        // GM Controls
         if (window.userRole === 'GM') {
-            // ARMING
+
+            // Arm missile
             missiles[d.id].marker.on('click', (e) => {
                 L.DomEvent.stopPropagation(e);
                 selectedGmMissileId = d.id;
-                document.getElementById('gm-threats').innerHTML = `<b style="color:red;">ARMED: ${d.id}</b><br>Click a BASE to target.`;
+                document.getElementById('gm-threats').innerHTML =
+                    `<b style="color:red;">ARMED: ${d.id}</b><br>Click a BASE to target.`;
             });
-            // REVEALING
+
+            // Reveal / hide
             missiles[d.id].marker.on('contextmenu', (e) => {
                 L.DomEvent.stopPropagation(e);
-                if (e.originalEvent) e.originalEvent.preventDefault();
-                send('missile', { ...missiles[d.id], visible: !missiles[d.id].visible });
+                e.originalEvent.preventDefault();
+                send('missile', {
+                    ...missiles[d.id],
+                    visible: !missiles[d.id].visible
+                });
             });
         }
-    } 
-    // 2. UPDATE STATE
-    else {
-        missiles[d.id].visible = d.visible;
-        missiles[d.id].status = d.status;
-        missiles[d.id].target = d.target;
-        missiles[d.id].startTime = d.startTime;
+    }
 
-        if (window.userRole === 'GM') {
-            missiles[d.id].marker.setOpacity(d.visible ? 1.0 : 0.4);
-        }
+    // 🔥 ALWAYS SYNC FULL STATE
+    missiles[d.id] = {
+        ...missiles[d.id],
+        ...d
+    };
+
+    // Update marker position
+    if (missiles[d.id].marker) {
+        missiles[d.id].marker.setLatLng([d.lat, d.lng]);
+        missiles[d.id].marker.setOpacity(
+            window.userRole === 'GM'
+                ? (d.visible ? 1 : 0.4)
+                : 1
+        );
     }
 }
         
@@ -498,43 +509,49 @@ function syncMissile(d) {
                 // 2. Process Missiles (25 mins)
                 let threatHTML = "";
                 Object.keys(missiles).forEach(id => {
-                    const m = missiles[id];
-                    const elapsed = now - m.time;
-                    const pct = Math.min(elapsed / MISSILE_FLIGHT_TIME, 1);
-                    
-                    const left = Math.max(0, MISSILE_FLIGHT_TIME - elapsed);
-                    const min = Math.floor(left/60000);
-                    const sec = Math.floor((left%60000)/1000);
-                    threatHTML += `<div>INC MISSILE: <span style="float:right;">${min}:${sec < 10 ? '0'+sec : sec}</span></div>`;
 
-                    if (pct >= 1) {
-                        // Impact!
-                        map.removeLayer(m.marker);
-                        if(gmLines[id]) map.removeLayer(gmLines[id]);
-                        
-                        // Check if a base is STILL at the target coordinates
-                        if (window.userRole === 'GM') {
-                            const hitBase = Object.values(bases).find(b => {
-                                const bPos = b.marker.getLatLng();
-                                // If the base is within a tiny radius of the explosion, it dies.
-                                return map.distance(bPos, m.target) < 10000; 
-                            });
-                            
-                            if (hitBase) {
-                                send('kill', { id: hitBase.id });
-                            } else {
-                                // Missile missed! Base successfully dodged.
-                                send('ann', { payload: "MISSILE IMPACTED EMPTY TERRAIN." });
-                            }
-                        }
-                        delete missiles[id];
-                    } else {
-                        // Flying
-                        const curLat = m.start.lat + (m.target.lat - m.start.lat) * pct;
-                        const curLng = m.start.lng + (m.target.lng - m.start.lng) * pct;
-                        m.marker.setLatLng([curLat, curLng]);
-                    }
-                });
+    const m = missiles[id];
+
+    if (m.status !== 'flight') return;
+
+    const elapsed = now - m.time;
+    const pct = Math.min(elapsed / MISSILE_FLIGHT_TIME, 1);
+
+    const left = Math.max(0, MISSILE_FLIGHT_TIME - elapsed);
+    const min = Math.floor(left / 60000);
+    const sec = Math.floor((left % 60000) / 1000);
+
+    threatHTML += `<div>INC MISSILE:
+        <span style="float:right;">${min}:${sec < 10 ? '0'+sec : sec}</span>
+    </div>`;
+
+    if (pct >= 1) {
+
+        map.removeLayer(m.marker);
+
+        if (window.userRole === 'GM') {
+
+            const hitBase = Object.values(bases).find(b => {
+                const bPos = b.marker.getLatLng();
+                return map.distance(bPos, m.target) < 10000;
+            });
+
+            if (hitBase) send('kill', { id: hitBase.id });
+        }
+
+        delete missiles[id];
+    }
+    else {
+
+        const curLat =
+            m.start.lat + (m.target.lat - m.start.lat) * pct;
+
+        const curLng =
+            m.start.lng + (m.target.lng - m.start.lng) * pct;
+
+        m.marker.setLatLng([curLat, curLng]);
+    }
+});
 
                 document.getElementById('p-threats').innerHTML = threatHTML || "NO ACTIVE THREATS";
                 document.getElementById('gm-threats').innerHTML = threatHTML || "NO ACTIVE THREATS";
