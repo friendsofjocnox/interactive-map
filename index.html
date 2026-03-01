@@ -186,15 +186,7 @@
         } catch(e) { console.error("Supabase Init Error:", e); }
 
         const channel = supabase ? supabase.channel('war-room', { config: { broadcast: { self: true } } }) : null;
-
-        // --- CUSTOM ICONS ---
-        // Replace the URL with your Supabase Public PNG link
-        const missileIcon = L.icon({
-            iconUrl: 'https://hfripibhhypbvnoimzdr.supabase.co/storage/v1/object/public/map-data/5537993.png', 
-            iconSize: [32, 32], 
-            iconAnchor: [16, 16]
-            className: 'missile-glow'
-        });
+        
         
         // --- GLOBALS ---
         window.userRole = null;
@@ -221,6 +213,13 @@
        // --- LOAD CUSTOM MAP BORDERS (GeoJSON) ---
 const MAP_URL = 'https://hfripibhhypbvnoimzdr.supabase.co/storage/v1/object/public/map-data/map.geojson'; // The link you just copied
 
+        const missileIcon = L.icon({
+            iconUrl: 'https://hfripibhhypbvnoimzdr.supabase.co/storage/v1/object/public/map-data/5537993.png', 
+            iconSize: [32, 32], 
+            iconAnchor: [16, 16]
+            className: 'missile-glow'
+        });
+        
 fetch(MAP_URL) 
     .then(response => response.json())
     .then(data => {
