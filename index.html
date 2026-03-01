@@ -356,56 +356,61 @@ fetch(MAP_URL)
         }
 
         function syncMissile(d) {
-        // FOG OF WAR: If player, and missile is idle & hidden, do not show it.
-        if (window.userRole === 'PLAYER' && d.status === 'idle' && !d.visible) {
-            if (missiles[d.id]) {
-                map.removeLayer(missiles[d.id].marker);
-                delete missiles[d.id];
-            }
-            return; 
+    // FOG OF WAR: If it's a Player, and the missile is idle & hidden, delete/ignore it.
+    if (window.userRole === 'PLAYER' && d.status === 'idle' && !d.visible) {
+        if (missiles[d.id]) {
+            map.removeLayer(missiles[d.id].marker);
+            delete missiles[d.id];
         }
-    
-        if (!missiles[d.id]) {
-            // Create the missile
-            missiles[d.id] = d;
-            missiles[d.id].marker = L.marker([d.lat, d.lng], { 
-                icon: missileIcon 
-            }).addTo(map);
-    
-            // GM CONTROLS
-            if (window.userRole === 'GM') {
-                // Left click: Select for launch
-                missiles[d.id].marker.on('click', (e) => {
-                    L.DomEvent.stopPropagation(e);
-                    if (d.status === 'idle') {
-                        selectedGmMissileId = d.id;
-                        alert("Missile Selected. Click a target base to LAUNCH.");
-                    }
-                });
-    
-                // Right click: Toggle Visibility
-                missiles[d.id].marker.on('contextmenu', (e) => {
-                    e.originalEvent.preventDefault();
-                    if (d.status === 'idle') {
-                        const isVisible = !missiles[d.id].visible;
-                        send('missile', { ...missiles[d.id], visible: isVisible });
-                        alert(isVisible ? "Missile REVEALED to Player." : "Missile HIDDEN from Player.");
-                    }
-                });
-            }
-        } else {
-            // Update existing missile state
-            missiles[d.id].status = d.status;
-            missiles[d.id].visible = d.visible;
-            missiles[d.id].target = d.target;
-            missiles[d.id].startTime = d.startTime;
-    
-            // Visual feedback for GM: dim hidden missiles
-            if (window.userRole === 'GM' && d.status === 'idle') {
-                missiles[d.id].marker.setOpacity(d.visible ? 1.0 : 0.4);
-            }
+        return; 
+    }
+
+    // 1. CREATE MISSILE (If it doesn't exist yet)
+    if (!missiles[d.id]) {
+        missiles[d.id] = d;
+        
+        // GM sees hidden missiles as ghosts (0.4). Players only see fully visible ones (1.0).
+        const startOpacity = (window.userRole === 'GM' && !d.visible) ? 0.4 : 1.0;
+
+        missiles[d.id].marker = L.marker([d.lat, d.lng], { 
+            icon: missileIcon,
+            opacity: startOpacity 
+        }).addTo(map);
+
+        // GM CLICK CONTROLS
+        if (window.userRole === 'GM') {
+            // Left Click: Arm for Launch
+            missiles[d.id].marker.on('click', (e) => {
+                L.DomEvent.stopPropagation(e);
+                if (missiles[d.id].status === 'idle') {
+                    selectedGmMissileId = d.id;
+                    alert("Missile Armed. Click a target base to LAUNCH.");
+                }
+            });
+
+            // Right Click: Toggle Visibility for Player
+            missiles[d.id].marker.on('contextmenu', (e) => {
+                e.originalEvent.preventDefault();
+                if (missiles[d.id].status === 'idle') {
+                    const isVisible = !missiles[d.id].visible;
+                    send('missile', { ...missiles[d.id], visible: isVisible });
+                }
+            });
+        }
+    } 
+    // 2. UPDATE EXISTING MISSILE
+    else {
+        missiles[d.id].status = d.status;
+        missiles[d.id].visible = d.visible;
+        if (d.target) missiles[d.id].target = d.target;
+        if (d.startTime) missiles[d.id].startTime = d.startTime;
+
+        // Update ghosting effect for the GM when they right-click to reveal/hide
+        if (window.userRole === 'GM') {
+            missiles[d.id].marker.setOpacity(d.visible ? 1.0 : 0.4);
         }
     }
+}
 
         function handleReq(d) {
             if (window.userRole !== 'GM') return;
