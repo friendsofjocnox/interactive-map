@@ -331,11 +331,28 @@ fetch(MAP_URL)
                     radius: radius, fillColor: color, color: '#fff', weight: 2, fillOpacity: 0.8 
                 }).addTo(map);
                 
+                // Inside syncBase, where bases[d.id].marker.on('click') is:
                 bases[d.id].marker.on('click', (e) => {
                     L.DomEvent.stopPropagation(e);
-    
-                // PLAYER LOGIC (Selecting bases to move)
-                if (window.userRole === 'PLAYER') {
+                    
+                    // GM LAUNCH LOGIC
+                    if (window.userRole === 'GM' && selectedGmMissileId) {
+                        const mId = selectedGmMissileId;
+                        const targetLatLng = bases[d.id].marker.getLatLng();
+                
+                        send('missile', {
+                            ...missiles[mId],
+                            status: 'flight',
+                            visible: true,      // FORCE VISIBLE ON LAUNCH
+                            target: targetLatLng,
+                            startTime: Date.now()
+                        });
+                
+                        selectedGmMissileId = null; 
+                        document.getElementById('gm-threats').innerText = "MISSILE AWAY.";
+                    } 
+                    // PLAYER SELECTION LOGIC
+                    else if (window.userRole === 'PLAYER') {
                     selectedBaseId = d.id;
                     document.getElementById('sel-id').innerText = isMob ? "M.O.B Selected" : "F.O.S Selected";
                     Object.values(bases).forEach(b => b.marker.setStyle({ color: '#fff' }));
@@ -364,7 +381,7 @@ fetch(MAP_URL)
         }
 
 function syncMissile(d) {
-    // FOG OF WAR: If it's a Player, and the missile is idle & hidden, delete/ignore it.
+    // PLAYER FOG OF WAR
     if (window.userRole === 'PLAYER' && d.status === 'idle' && !d.visible) {
         if (missiles[d.id]) {
             map.removeLayer(missiles[d.id].marker);
@@ -373,49 +390,71 @@ function syncMissile(d) {
         return; 
     }
 
-    // 1. CREATE MISSILE (If it doesn't exist yet)
     if (!missiles[d.id]) {
+        // CREATE NEW MISSILE
         missiles[d.id] = { ...d };
-        
         const startOpacity = (window.userRole === 'GM' && !d.visible) ? 0.4 : 1.0;
 
         missiles[d.id].marker = L.marker([d.lat, d.lng], { 
             icon: missileIcon,
-            opacity: startOpacity 
+            opacity: startOpacity,
+            interactive: true // Ensures the marker can be clicked
         }).addTo(map);
 
+        // --- GM INTERACTION ---
         if (window.userRole === 'GM') {
+            
+            // LEFT CLICK: Select/Arm for Launch
             missiles[d.id].marker.on('click', (e) => {
                 L.DomEvent.stopPropagation(e);
                 if (missiles[d.id].status === 'idle') {
                     selectedGmMissileId = d.id;
-                    console.log("Missile Armed:", d.id);
+                    // Visual feedback: briefly dip opacity to show selection
+                    missiles[d.id].marker.setOpacity(1.0);
+                    console.log("GM SELECTED MISSILE:", d.id);
+                    // Update UI to show selection
+                    document.getElementById('gm-threats').innerHTML = `<b style="color:yellow;">ARMED: ${d.id}</b><br>Click a Base to Launch.`;
                 }
             });
 
+            // RIGHT CLICK: Reveal/Hide from Player
             missiles[d.id].marker.on('contextmenu', (e) => {
-                e.originalEvent.preventDefault();
+                L.DomEvent.stopPropagation(e);
+                // Prevent the browser's default right-click menu
+                if (e.originalEvent) e.originalEvent.preventDefault();
+                
                 if (missiles[d.id].status === 'idle') {
-                    send('missile', { ...missiles[d.id], visible: !missiles[d.id].visible });
+                    const newVisibility = !missiles[d.id].visible;
+                    console.log("GM TOGGLE VISIBILITY:", newVisibility);
+                    
+                    // Broadcast the update
+                    send('missile', { ...missiles[d.id], visible: newVisibility });
                 }
             });
         }
-    } 
-    // 2. UPDATE EXISTING MISSILE
-    else {
+    } else {
+        // UPDATE EXISTING MISSILE STATE
         missiles[d.id].status = d.status;
         missiles[d.id].visible = d.visible;
-        missiles[d.id].target = d.target;
-        missiles[d.id].startTime = d.startTime;
-
-        // Update GM visual feedback
+        missiles[d.id].lat = d.lat;
+        missiles[d.id].lng = d.lng;
+        
+        // Handle Visibility changes
         if (window.userRole === 'GM') {
             missiles[d.id].marker.setOpacity(d.visible ? 1.0 : 0.4);
         }
         
-        // If it just turned visible for a player, make sure it's on the map
-        if (window.userRole === 'PLAYER' && d.visible) {
-            missiles[d.id].marker.addTo(map);
+        // If a missile was hidden but is now visible (or flying), make sure Player sees it
+        if (window.userRole === 'PLAYER') {
+            if (d.visible || d.status === 'flight') {
+                missiles[d.id].marker.addTo(map);
+            }
+        }
+
+        // If it's flying, we need the target and start time for the animation loop
+        if (d.status === 'flight') {
+            missiles[d.id].target = d.target;
+            missiles[d.id].startTime = d.startTime;
         }
     }
 }
