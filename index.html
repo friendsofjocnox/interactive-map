@@ -335,31 +335,29 @@ fetch(MAP_URL)
                 bases[d.id].marker.on('click', (e) => {
                     L.DomEvent.stopPropagation(e);
                 
-                    // GM TARGETING LOGIC
                     if (window.userRole === 'GM' && selectedGmMissileId) {
+                        const mId = selectedGmMissileId;
+                        const missile = missiles[mId];
+                        const startPos = missile.marker.getLatLng();
                 
-                    const mId = selectedGmMissileId;
-                    const missile = missiles[mId];
-                    const startPos = missile.marker.getLatLng();
+                        // Broadcast Launch
+                        send('missile', {
+                            id: mId,
+                            lat: startPos.lat,
+                            lng: startPos.lng,
+                            start: startPos,
+                            target: e.latlng, // Target the base coordinates
+                            status: 'flight',
+                            visible: true,    // Always reveal on launch
+                            time: Date.now()
+                        });
                 
-                    send('missile', {
-                        id: mId,
-                        lat: startPos.lat,
-                        lng: startPos.lng,
-                        start: startPos,
-                        target: e.latlng,
-                        status: 'flight',
-                        visible: true,
-                        time: Date.now()
-                    });
-                
-                    selectedGmMissileId = null;
-                }
-                    // PLAYER SELECTION LOGIC
+                        selectedGmMissileId = null;
+                        showAnn("MISSILE LAUNCHED: TARGET " + d.type.toUpperCase());
+                    } 
                     else if (window.userRole === 'PLAYER') {
                         selectedBaseId = d.id;
-                        document.getElementById('sel-id').innerText = d.type.toUpperCase() + " Selected";
-                        // Reset colors and highlight selection
+                        document.getElementById('sel-id').innerText = d.type.toUpperCase();
                         Object.values(bases).forEach(b => b.marker.setStyle({ color: '#fff' }));
                         bases[d.id].marker.setStyle({ color: 'yellow' });
                     }
@@ -367,63 +365,50 @@ fetch(MAP_URL)
             }
         }
 
-function syncMissile(d) {
-
-    // PLAYER FOG OF WAR
-    if (window.userRole === 'PLAYER' && d.status === 'idle' && !d.visible) {
-        if (missiles[d.id]?.marker) {
-            map.removeLayer(missiles[d.id].marker);
+        function syncMissile(d) {
+            // PLAYER FOG OF WAR
+            if (window.userRole === 'PLAYER' && d.status === 'idle' && !d.visible) {
+                if (missiles[d.id]?.marker) map.removeLayer(missiles[d.id].marker);
+                delete missiles[d.id];
+                return;
+            }
+        
+            if (!missiles[d.id]) {
+                missiles[d.id] = { ...d };
+                missiles[d.id].marker = L.marker([d.lat, d.lng], { icon: missileIcon }).addTo(map);
+        
+                if (window.userRole === 'GM') {
+                    // LEFT CLICK: Arm for Launch
+                    missiles[d.id].marker.on('click', (e) => {
+                        L.DomEvent.stopPropagation(e);
+                        selectedGmMissileId = d.id;
+                        document.getElementById('gm-threats').innerHTML = 
+                            `<b style="color:yellow; text-shadow: 0 0 5px gold;">ARMED: ${d.id}</b><br>Target a base to launch.`;
+                    });
+        
+                    // RIGHT CLICK: Toggle Visibility
+                    missiles[d.id].marker.on('contextmenu', (e) => {
+                        L.DomEvent.stopPropagation(e);
+                        e.originalEvent.preventDefault();
+                        send('missile', { ...d, visible: !d.visible });
+                    });
+                }
+            }
+        
+            // Sync state
+            const m = missiles[d.id];
+            m.visible = d.visible;
+            m.status = d.status;
+            m.target = d.target;
+            m.start = d.start;
+            m.time = d.time;
+        
+            if (m.marker) {
+                m.marker.setLatLng([d.lat, d.lng]);
+                // GM sees hidden missiles as ghosts (0.4 opacity), Players see them fully or not at all
+                m.marker.setOpacity(window.userRole === 'GM' ? (d.visible ? 1 : 0.4) : 1);
+            }
         }
-        delete missiles[d.id];
-        return;
-    }
-
-    // CREATE IF NOT EXISTS
-    if (!missiles[d.id]) {
-        missiles[d.id] = {};
-        missiles[d.id].marker = L.marker([d.lat, d.lng], {
-            icon: missileIcon
-        }).addTo(map);
-
-        // GM Controls
-        if (window.userRole === 'GM') {
-
-            // Arm missile
-            missiles[d.id].marker.on('click', (e) => {
-                L.DomEvent.stopPropagation(e);
-                selectedGmMissileId = d.id;
-                document.getElementById('gm-threats').innerHTML =
-                    `<b style="color:red;">ARMED: ${d.id}</b><br>Click a BASE to target.`;
-            });
-
-            // Reveal / hide
-            missiles[d.id].marker.on('contextmenu', (e) => {
-                L.DomEvent.stopPropagation(e);
-                e.originalEvent.preventDefault();
-                send('missile', {
-                    ...missiles[d.id],
-                    visible: !missiles[d.id].visible
-                });
-            });
-        }
-    }
-
-    // 🔥 ALWAYS SYNC FULL STATE
-    missiles[d.id] = {
-        ...missiles[d.id],
-        ...d
-    };
-
-    // Update marker position
-    if (missiles[d.id].marker) {
-        missiles[d.id].marker.setLatLng([d.lat, d.lng]);
-        missiles[d.id].marker.setOpacity(
-            window.userRole === 'GM'
-                ? (d.visible ? 1 : 0.4)
-                : 1
-        );
-    }
-}
         
         function handleReq(d) {
             if (window.userRole !== 'GM') return;
@@ -463,15 +448,31 @@ function syncMissile(d) {
             }
         }
 
+        // Updated Kill Logic
         function killBase(id) {
             if (bases[id]) { 
                 const pos = bases[id].marker.getLatLng();
                 map.removeLayer(bases[id].marker); 
+                
+                // Add a permanent Red "X" to the map
+                const deadIcon = L.divIcon({
+                    html: '<b style="color:#ff3333; font-size:24px; text-shadow: 0 0 5px #000;">X</b>',
+                    className: 'dead-marker',
+                    iconSize: [20, 20],
+                    iconAnchor: [10, 12]
+                });
+                L.marker(pos, { icon: deadIcon, interactive: false }).addTo(map);
+        
                 delete bases[id]; 
                 
-                // Explosion
+                // Visual Explosion effect
                 const boom = L.circleMarker(pos, { radius: 50, fillColor: 'red', color: 'orange', fillOpacity: 0.8 }).addTo(map);
                 setTimeout(() => map.removeLayer(boom), 2000);
+        
+                if(id === selectedBaseId) {
+                    selectedBaseId = null;
+                    document.getElementById('sel-id').innerText = "DESTROYED";
+                }
             }
         }
 
