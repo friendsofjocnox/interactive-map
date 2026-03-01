@@ -139,7 +139,7 @@
                                                                                                                                                                                       
         </pre>
 
-        <h1 style="letter-spacing: 5px;">ST@R COMMAND</h1>
+        <h1 style="letter-spacing: 5px;">ST@@R COMMAND</h1>
         <small style="color: #0aa;">Enter your assigned clearance code to proceed.</small><br><br>
         <input type="password" id="access-code" placeholder="ENCRYPTION KEY"><br>
         <button onclick="attemptLogin()">INITIALIZE LINK</button>
@@ -190,9 +190,10 @@
         // --- CUSTOM ICONS ---
         // Replace the URL with your Supabase Public PNG link
         const missileIcon = L.icon({
-            iconUrl: '🚀', 
+            iconUrl: 'https://hfripibhhypbvnoimzdr.supabase.co/storage/v1/object/public/map-data/map.geojson', 
             iconSize: [32, 32], 
             iconAnchor: [16, 16]
+            className: 'missile-glow'
         });
         
         // --- GLOBALS ---
