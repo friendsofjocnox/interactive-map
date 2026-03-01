@@ -187,6 +187,14 @@
 
         const channel = supabase ? supabase.channel('war-room', { config: { broadcast: { self: true } } }) : null;
 
+        // --- CUSTOM ICONS ---
+        // Replace the URL with your Supabase Public PNG link
+        const missileIcon = L.icon({
+            iconUrl: '🚀', 
+            iconSize: [32, 32], 
+            iconAnchor: [16, 16]
+        });
+        
         // --- GLOBALS ---
         window.userRole = null;
         window.gmTool = null;
@@ -355,7 +363,7 @@ fetch(MAP_URL)
             }
         }
 
-        function syncMissile(d) {
+function syncMissile(d) {
     // FOG OF WAR: If it's a Player, and the missile is idle & hidden, delete/ignore it.
     if (window.userRole === 'PLAYER' && d.status === 'idle' && !d.visible) {
         if (missiles[d.id]) {
@@ -367,9 +375,8 @@ fetch(MAP_URL)
 
     // 1. CREATE MISSILE (If it doesn't exist yet)
     if (!missiles[d.id]) {
-        missiles[d.id] = d;
+        missiles[d.id] = { ...d };
         
-        // GM sees hidden missiles as ghosts (0.4). Players only see fully visible ones (1.0).
         const startOpacity = (window.userRole === 'GM' && !d.visible) ? 0.4 : 1.0;
 
         missiles[d.id].marker = L.marker([d.lat, d.lng], { 
@@ -377,23 +384,19 @@ fetch(MAP_URL)
             opacity: startOpacity 
         }).addTo(map);
 
-        // GM CLICK CONTROLS
         if (window.userRole === 'GM') {
-            // Left Click: Arm for Launch
             missiles[d.id].marker.on('click', (e) => {
                 L.DomEvent.stopPropagation(e);
                 if (missiles[d.id].status === 'idle') {
                     selectedGmMissileId = d.id;
-                    alert("Missile Armed. Click a target base to LAUNCH.");
+                    console.log("Missile Armed:", d.id);
                 }
             });
 
-            // Right Click: Toggle Visibility for Player
             missiles[d.id].marker.on('contextmenu', (e) => {
                 e.originalEvent.preventDefault();
                 if (missiles[d.id].status === 'idle') {
-                    const isVisible = !missiles[d.id].visible;
-                    send('missile', { ...missiles[d.id], visible: isVisible });
+                    send('missile', { ...missiles[d.id], visible: !missiles[d.id].visible });
                 }
             });
         }
@@ -402,12 +405,17 @@ fetch(MAP_URL)
     else {
         missiles[d.id].status = d.status;
         missiles[d.id].visible = d.visible;
-        if (d.target) missiles[d.id].target = d.target;
-        if (d.startTime) missiles[d.id].startTime = d.startTime;
+        missiles[d.id].target = d.target;
+        missiles[d.id].startTime = d.startTime;
 
-        // Update ghosting effect for the GM when they right-click to reveal/hide
+        // Update GM visual feedback
         if (window.userRole === 'GM') {
             missiles[d.id].marker.setOpacity(d.visible ? 1.0 : 0.4);
+        }
+        
+        // If it just turned visible for a player, make sure it's on the map
+        if (window.userRole === 'PLAYER' && d.visible) {
+            missiles[d.id].marker.addTo(map);
         }
     }
 }
