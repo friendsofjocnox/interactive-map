@@ -223,8 +223,8 @@
             };
         }
         
-        const MISSILE_FLIGHT_TIME = 25*60*1000; // 25 Minutes
-        const BASE_MOVE_TIME = 5*60*1000; // 5 Minutes
+        const MISSILE_FLIGHT_TIME = 1.2*60*1000; // 25 Minutes
+        const BASE_MOVE_TIME = 1*60*1000; // 5 Minutes
 
        // --- MAP SETUP ---
         const bounds = [[-85, -180], [85, 180]];
@@ -571,7 +571,7 @@ fetch(MAP_URL)
         }
 
         // --- JAMMING SYSTEM ---
-        function applyJam(baseId, duration = 10*60*1000) { // 10 minutes
+        function applyJam(baseId, duration = 1*60*1000) { // 10 minutes
         
             const base = bases[baseId];
             if (!base) return;
