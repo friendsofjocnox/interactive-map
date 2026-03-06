@@ -154,6 +154,7 @@
         <b style="color:cyan;">PLAYER COMMAND</b><hr>
         <small>Select base (Click), Request move (Right-Click)</small><br>
         Selection: <span id="sel-id" style="color:yellow;">None</span>
+        <button onclick="requestJam()">REQUEST JAM</button>
         <div class="threat-list" id="p-threats">NO ACTIVE THREATS</div>
     </div>
 
@@ -197,6 +198,7 @@
         const missiles = {};
         const requests = {};
         const gmLines = {};
+        const jams = {};
 
         // --- STATE EXPORT (GM HOSTING) ---
         function exportGameState() {
@@ -242,7 +244,13 @@ const MAP_URL = 'https://hfripibhhypbvnoimzdr.supabase.co/storage/v1/object/publ
             iconAnchor: [16, 16],
             className: 'missile-glow'
         });
-        
+
+        const jamIcon = L.icon({
+            iconUrl: "https://hfripibhhypbvnoimzdr.supabase.co/storage/v1/object/public/map-data/static.gif",
+            iconSize: [60,60],
+            iconAnchor: [30,30]
+        });
+            
 fetch(MAP_URL) 
     .then(response => response.json())
     .then(data => {
@@ -293,7 +301,31 @@ fetch(MAP_URL)
                 .on('broadcast', { event: 'req' }, ({payload}) => handleReq(payload))
                 .on('broadcast', { event: 'move_start' }, ({payload}) => startBaseMove(payload))
                 .on('broadcast', { event: 'kill' }, ({payload}) => killBase(payload.id))
-            
+                
+                // PLAYER REQUESTS JAM
+                .on('broadcast', { event: 'jam_req' }, ({payload}) => {
+                
+                    if (window.userRole !== 'GM') return;
+                
+                    const approve = confirm(
+                        payload.player + " wants to JAM base. Approve?"
+                    );
+                
+                    if (approve) {
+                        send('jam_start', {
+                            baseId: payload.baseId,
+                            duration: 600000
+                        });
+                    }
+                
+                })
+                
+                // START JAM (ALL CLIENTS)
+                .on('broadcast', { event: 'jam_start' }, ({payload}) => {
+                
+                    applyJam(payload.baseId, payload.duration);
+                
+                })            
                 // PLAYER reconnect requests state
                 .on('broadcast', { event: 'state_request' }, () => {
                     if (window.userRole === 'GM') {
@@ -327,6 +359,18 @@ fetch(MAP_URL)
         };
 
         // --- ACTIONS ---
+        window.requestJam = () => {
+            if (!selectedBaseId) {
+                alert("Select a base first.");
+                return;
+            }
+            send('jam_req', {
+                baseId: selectedBaseId,
+                player: "PLAYER"
+            });
+            alert("Jam request sent to Command.");
+        };
+        
         map.on('click', (e) => {
             if (window.userRole === 'GM') {
                 if (window.gmTool === 'mob' || window.gmTool === 'fos') {
@@ -526,6 +570,29 @@ fetch(MAP_URL)
             setTimeout(() => b.style.display = 'none', 7000);
         }
 
+        // --- JAMMING SYSTEM ---
+        function applyJam(baseId, duration = 10*60*1000) { // 10 minutes
+        
+            const base = bases[baseId];
+            if (!base) return;
+        
+            const pos = base.marker.getLatLng();
+        
+            const jamMarker = L.marker(pos, {
+                icon: jamIcon,
+                interactive:false
+            }).addTo(map);
+        
+            jams[baseId] = jamMarker;
+        
+            setTimeout(() => {
+                if (jams[baseId]) {
+                    map.removeLayer(jams[baseId]);
+                    delete jams[baseId];
+                }
+            }, duration);
+        }
+        
         // --- SIMULATION LOOP ---
         function startLoop() {
             setInterval(() => {
