@@ -197,6 +197,29 @@
         const missiles = {};
         const requests = {};
         const gmLines = {};
+
+        // --- STATE EXPORT (GM HOSTING) ---
+        function exportGameState() {
+            return {
+                bases: Object.values(bases).map(b => ({
+                    id: b.id,
+                    lat: b.marker.getLatLng().lat,
+                    lng: b.marker.getLatLng().lng,
+                    type: b.type
+                })),
+                missiles: Object.values(missiles).map(m => ({
+                    id: m.id,
+                    lat: m.marker.getLatLng().lat,
+                    lng: m.marker.getLatLng().lng,
+                    status: m.status,
+                    visible: m.visible,
+                    start: m.start,
+                    target: m.target,
+                    time: m.time
+                })),
+                requests: Object.values(requests).map(r => r.d)
+            };
+        }
         
         const MISSILE_FLIGHT_TIME = 25*60*1000; // 25 Minutes
         const BASE_MOVE_TIME = 5*60*1000; // 5 Minutes
@@ -253,6 +276,11 @@ fetch(MAP_URL)
             
             initNetwork();
             startLoop();
+
+            // ask the GM for the current game state
+            setTimeout(() => {
+                send('state_request', {});
+            }, 500);
         };
 
         // --- NETWORK ---
@@ -265,6 +293,22 @@ fetch(MAP_URL)
                 .on('broadcast', { event: 'req' }, ({payload}) => handleReq(payload))
                 .on('broadcast', { event: 'move_start' }, ({payload}) => startBaseMove(payload))
                 .on('broadcast', { event: 'kill' }, ({payload}) => killBase(payload.id))
+            
+                // PLAYER reconnect requests state
+                .on('broadcast', { event: 'state_request' }, () => {
+                    if (window.userRole === 'GM') {
+                        send('state_sync', exportGameState());
+                    }
+                })
+            
+                // GM sends full state
+                .on('broadcast', { event: 'state_sync' }, ({payload}) => {
+            
+                    payload.bases.forEach(b => syncBase(b));
+                    payload.missiles.forEach(m => syncMissile(m));
+                    payload.requests.forEach(r => handleReq(r));
+            
+                })
                 .subscribe();
         }
 
